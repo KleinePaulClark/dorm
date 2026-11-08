@@ -1,0 +1,299 @@
+import { createModal, openModal } from '../../components/modal.js';
+import { ensureOwnerSidebarStyles, loadOwnerStylesheet, renderOwnerSidebar, updateListingCountsInSidebar } from './sidebarOwner.js';
+import { withMediaAccessToken } from '../../services/mediaAccess.js';
+
+const API = window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1';
+const apiBase = API.replace(/\/api\/v1\/?$/, '');
+const session = () => { try { return JSON.parse(localStorage.getItem('dormhive.user')) ?? {}; } catch { return {}; } };
+const auth = () => {
+  const token = localStorage.getItem('dormhive.accessToken') ?? '';
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+const esc = (v = '') => { const e = document.createElement('span'); e.textContent = v; return e.innerHTML; };
+const initials = (name = '') => name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') || 'O';
+const resolveAvatarUrl = (value = '') => {
+  const url = String(value || '').trim();
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  return withMediaAccessToken(`${apiBase}${url.startsWith('/') ? '' : '/'}${url}`);
+};
+
+function renderTenantAvatar(entry) {
+  const name = entry.tenant_name || 'Tenant';
+  const source = resolveAvatarUrl(entry.tenant_avatar_url || entry.avatar_url || entry.tenant_avatar || '');
+  if (!source) return `<span class="tenant-avatar-fallback">${esc(initials(name))}</span>`;
+  return `<img src="${esc(source)}" alt="${esc(name)} profile" onerror="this.style.display='none'; this.nextElementSibling.style.display='grid';"><span class="tenant-avatar-fallback" style="display:none;">${esc(initials(name))}</span>`;
+}
+
+function css() {
+  const stylesheet = new URL('./style/activeTenant.css', import.meta.url);
+  stylesheet.searchParams.set('v', 'active-tenant-focus-neutral-1');
+  return loadOwnerStylesheet('tenants', stylesheet);
+}
+
+function tenantStatus(entry) {
+  const status = String(entry.status || 'approved').toLowerCase();
+  if (status === 'approved') return { label: 'Active', className: 'status-paid' };
+  if (status === 'pending') return { label: 'Partial', className: 'status-partial' };
+  return { label: 'Overdue', className: 'status-overdue' };
+}
+
+function isActiveTenant(entry) {
+  const status = String(entry?.status ?? '').toLowerCase();
+  return status === 'approved';
+}
+
+function unitLabel(entry) {
+  return entry.unit || entry.property_title || 'Unit Unassigned';
+}
+
+function unitNumber(entry) {
+  const unit = entry.unit || entry.unit_number || entry.room_number || entry.unit_name || '';
+  return unit && unit !== entry.property_title ? unit : '—';
+}
+
+function formatLeaseEnd(entry) {
+  if (entry.is_indefinite_move_out === true || Number(entry.is_indefinite_move_out) === 1) return 'Indefinite';
+  const raw = entry.move_out_date ?? null;
+  if (!raw) return '—';
+  const date = new Date(raw); if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+}
+
+function normalizeTenantEntry(entry = {}) {
+  const tenantName = entry.tenant_name || [entry.first_name, entry.last_name].filter(Boolean).join(' ') || 'Tenant';
+  return {
+    ...entry,
+    tenant_name: tenantName,
+    property_title: entry.property_title || entry.title || 'Property',
+    unit: entry.unit || entry.unit_number || entry.room_number || entry.unit_name || ''
+  };
+}
+
+export async function renderActiveTenant(root = document.querySelector('#app')) {
+  if (!root) throw new Error('Active tenants page requires #app.');
+  await Promise.all([css(), ensureOwnerSidebarStyles()]);
+
+  root.innerHTML = `
+    <div class="owner-shell">
+      ${renderOwnerSidebar('activeTenant')}
+      <div class="owner-main">
+        <main class="tenants-page">
+          <section class="page-head">
+            <div>
+              <p class="eyebrow">Property management</p>
+              <h1>Active Tenants</h1>
+            </div>
+            <article class="summary-card">
+              <span class="summary-icon" aria-hidden="true"><i class="bi bi-people"></i></span>
+              <div class="summary-copy">
+                <span class="summary-label">Total Active Tenants</span>
+                <strong id="tenant-count">0</strong>
+              </div>
+            </article>
+          </section>
+
+          <section class="toolbar">
+            <label class="local-search" aria-label="Search tenants">
+              <span>⌕</span>
+              <input id="tenant-search" type="search" placeholder="Search tenant, unit, or property..." />
+            </label>
+          </section>
+
+          <section class="table-card">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tenant Name</th>
+                    <th>Unit / Property</th>
+                    <th>Rent Status</th>
+                    <th>Lease End Date</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="tenant-table-body">
+                  <tr><td colspan="5" class="status" role="status">Loading tenants…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <nav class="tenant-pagination" aria-label="Active tenants pagination">
+              <span class="tenant-pagination__info" aria-live="polite">Page 1 of 1</span>
+              <div>
+                <button type="button" data-page-previous aria-label="Previous page" disabled>Previous</button>
+                <button type="button" data-page-next aria-label="Next page" disabled>Next</button>
+              </div>
+            </nav>
+          </section>
+        </main>
+      </div>
+    </div>`;
+
+  const menuButton = root.querySelector('.owner-mobile-menu');
+  const pageHead = root.querySelector('.tenants-page .page-head');
+  if (menuButton && pageHead) pageHead.prepend(menuButton);
+
+  const tbody = root.querySelector('.tenant-table-body');
+  const searchInput = root.querySelector('#tenant-search');
+  const countBadge = root.querySelector('#tenant-count');
+  const pageInfo = root.querySelector('.tenant-pagination__info');
+  const previousPageButton = root.querySelector('[data-page-previous]');
+  const nextPageButton = root.querySelector('[data-page-next]');
+  const pageSize = 5;
+  let allRows = [];
+  let isLoading = false;
+  let currentPage = 1;
+
+  const renderRows = (query = '') => {
+    const term = query.trim().toLowerCase();
+    const rows = allRows.filter((entry) => {
+      const haystack = [entry.tenant_name, unitLabel(entry), entry.property_title, entry.status].filter(Boolean).join(' ').toLowerCase();
+      return !term || haystack.includes(term);
+    });
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    currentPage = Math.min(Math.max(1, currentPage), totalPages);
+    const startIndex = (currentPage - 1) * pageSize;
+    const pageRows = rows.slice(startIndex, startIndex + pageSize);
+
+    tbody.innerHTML = pageRows.map((entry) => {
+      const { label, className } = tenantStatus(entry);
+      return `
+        <tr data-booking-id="${esc(String(entry.id ?? ''))}">
+          <td class="tenant-name-cell">
+            <div class="tenant-cell">
+              <span class="tenant-avatar">${renderTenantAvatar(entry)}</span>
+              <span class="tenant-name-copy">
+                <strong>${esc(entry.tenant_name || 'Tenant')}</strong>
+                <span class="mobile-status status-pill ${className}">${esc(label)}</span>
+              </span>
+            </div>
+          </td>
+          <td class="tenant-property-cell">
+            <span class="desktop-data-value">${esc(unitLabel(entry))}</span>
+            <span class="mobile-field">
+              <span class="mobile-data-label"><i class="bi bi-house-door" aria-hidden="true"></i> Property</span>
+              <span class="mobile-data-value">${esc(entry.property_title || 'Property')}</span>
+            </span>
+            <span class="mobile-field">
+              <span class="mobile-data-label"><i class="bi bi-door-closed" aria-hidden="true"></i> Unit</span>
+              <span class="mobile-data-value">${esc(unitNumber(entry))}</span>
+            </span>
+          </td>
+          <td class="tenant-status-cell"><span class="status-pill ${className}">${esc(label)}</span></td>
+          <td class="tenant-lease-cell">
+            <span class="mobile-data-label"><i class="bi bi-calendar3" aria-hidden="true"></i> Lease End Date</span>
+            <span class="mobile-data-value">${esc(formatLeaseEnd(entry))}</span>
+          </td>
+          <td class="tenant-actions-cell">
+            <div class="action-group">
+              <button type="button" data-action="message" data-booking-id="${esc(String(entry.id ?? ''))}"><i class="bi bi-chat-dots mobile-action-icon" aria-hidden="true"></i>Message</button>
+              <button type="button" data-action="lease" data-booking-id="${esc(String(entry.id ?? ''))}"><i class="bi bi-eye mobile-action-icon" aria-hidden="true"></i>View Lease</button>
+            </div>
+          </td>
+        </tr>`;
+    }).join('') || '<tr class="empty-row"><td colspan="5" class="empty">No active tenants matched your search.</td></tr>';
+    if (countBadge) countBadge.textContent = String(rows.length);
+    pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+    previousPageButton.disabled = currentPage <= 1;
+    nextPageButton.disabled = currentPage >= totalPages || rows.length === 0;
+  };
+
+  previousPageButton.addEventListener('click', () => {
+    if (currentPage > 1) {
+      currentPage -= 1;
+      renderRows(searchInput.value);
+    }
+  });
+  nextPageButton.addEventListener('click', () => {
+    currentPage += 1;
+    renderRows(searchInput.value);
+  });
+
+  tbody.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+
+    const bookingId = button.dataset.bookingId;
+    const entry = allRows.find((item) => String(item.id) === String(bookingId));
+    if (!entry) return;
+
+    if (button.dataset.action === 'message') {
+      localStorage.setItem('dormhive.activeTenantSelection', JSON.stringify({
+        tenantId: entry.tenant_id,
+        propertyId: entry.property_id,
+        tenantName: entry.tenant_name || 'Tenant',
+        propertyTitle: entry.property_title || 'Property'
+      }));
+      location.hash = '#/owner/message';
+      return;
+    }
+
+    if (button.dataset.action === 'lease') {
+      const leaseModal = createModal({
+        title: 'Lease Details',
+        content: `
+          <div class="tenant-action-modal">
+            <p><strong>Tenant:</strong> ${esc(entry.tenant_name || 'Tenant')}</p>
+            <p><strong>Property:</strong> ${esc(unitLabel(entry))}</p>
+            <p><strong>Move-in:</strong> ${esc(new Date(entry.move_in_date ?? Date.now()).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }))}</p>
+            <p><strong>Move-out:</strong> ${esc(formatLeaseEnd(entry))}</p>
+            <p><strong>Occupants:</strong> ${esc(String(entry.occupants ?? 1))}</p>
+            <p><strong>Rent:</strong> ${esc(entry.monthly_rent ? `₱${Number(entry.monthly_rent).toLocaleString('en-US')}` : '—')}</p>
+          </div>
+        `
+      });
+      openModal(leaseModal);
+      return;
+    }
+
+    const paymentModal = createModal({
+      title: 'Payment History',
+      content: `
+        <div class="tenant-action-modal">
+          <p><strong>Tenant:</strong> ${esc(entry.tenant_name || 'Tenant')}</p>
+          <p><strong>Property:</strong> ${esc(unitLabel(entry))}</p>
+          <p><strong>Current status:</strong> ${esc(tenantStatus(entry).label)}</p>
+          <p><strong>Monthly rent:</strong> ${esc(entry.monthly_rent ? `₱${Number(entry.monthly_rent).toLocaleString('en-US')}` : '—')}</p>
+          <p><strong>Last update:</strong> ${esc(new Date(entry.updated_at ?? entry.created_at ?? Date.now()).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }))}</p>
+          <p class="tenant-action-note">This payment record is linked to the current active booking and can be extended once a payment endpoint is wired.</p>
+        </div>
+      `
+    });
+    openModal(paymentModal);
+  });
+
+  const loadTenants = async () => {
+    if (isLoading || !root.isConnected) return;
+    isLoading = true;
+    try {
+      const r = await fetch(`${API}/bookings`, { headers: auth() });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.message ?? 'Unable to load active tenants.');
+      allRows = Array.isArray(b.data)
+        ? b.data
+            .filter((item) => isActiveTenant(item))
+            .map((item) => normalizeTenantEntry(item))
+        : [];
+      renderRows();
+      const loadingCell = tbody.querySelector('.status');
+      if (loadingCell) loadingCell.remove();
+      await updateListingCountsInSidebar();
+    } catch (error) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty">${esc(error.message)}</td></tr>`;
+    } finally {
+      isLoading = false;
+    }
+  };
+
+  loadTenants();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadTenants();
+  });
+
+  searchInput?.addEventListener('input', (event) => {
+    currentPage = 1;
+    renderRows(event.target.value);
+  });
+
+}

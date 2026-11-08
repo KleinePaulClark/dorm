@@ -1,0 +1,1719 @@
+﻿import { showToast } from '../../components/toast.js';
+import { successDialog } from '../../components/modal.js';
+import { ensureOwnerSidebarStyles, loadOwnerStylesheet, renderOwnerSidebar, updateListingCountsInSidebar } from './sidebarOwner.js';
+import { withMediaAccessToken } from '../../services/mediaAccess.js';
+
+const API = (window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1').replace(/\/$/, '');
+const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('dormhive.accessToken') ?? ''}` });
+const user = () => JSON.parse(localStorage.getItem('dormhive.user') ?? '{}');
+const apiBase = API.replace(/\/api\/v1\/?$/, '');
+const MAX_PROPERTY_PHOTO_SIZE = 2 * 1024 * 1024;
+const SUPPORTED_PROPERTY_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const DEFAULT_IMAGE_PLACEHOLDER = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 300"><rect width="500" height="300" fill="#ecf5ef"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#4a7160" font-family="Inter,Arial,sans-serif" font-size="28">No image available</text></svg>');
+const resolveImageUrl = (value = '') => {
+  const url = String(value || '').trim();
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+  return withMediaAccessToken(/^https?:\/\//i.test(url) ? url : `${apiBase}${url.startsWith('/') ? '' : '/'}${url}`);
+};
+const normalizePropertyImage = (property) => {
+  const source = property.image_url || property.cover_image || (Array.isArray(property.images) && property.images[0]) || '';
+  return resolveImageUrl(source);
+};
+const normalizePropertyImages = (property = {}) => {
+  let images = property.images;
+  if (typeof images === 'string') {
+    try { images = JSON.parse(images); } catch { images = []; }
+  }
+  return [...new Set([normalizePropertyImage(property), ...(Array.isArray(images) ? images.map(resolveImageUrl) : [])].filter(Boolean))];
+};
+const normalizePropertyTypeLabel = (value = '') => {
+  const raw = String(value ?? '').trim().toLowerCase();
+  const labelMap = {
+    bedspace: 'Bedspace',
+    private_room: 'Solo Room',
+    'solo room': 'Solo Room',
+    entire_unit: 'Studio Unit',
+    'studio unit': 'Studio Unit'
+  };
+  return labelMap[raw] ?? (raw ? raw.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()) : '');
+};
+const parseNumericValue = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+const getOccupancySummary = (property = {}, bookings = []) => {
+  const totalCapacity = Math.max(0, parseNumericValue(property.total_slots ?? 0, 0));
+  const occupied = bookings.filter((booking) => {
+    const bookingPropertyId = String(booking.property_id ?? booking.propertyId ?? '');
+    const status = String(booking.status ?? '').toLowerCase();
+    return String(property.id) === bookingPropertyId && status === 'approved';
+  }).length;
+  const rate = totalCapacity > 0 ? Math.min(100, Math.round((occupied / totalCapacity) * 100)) : 0;
+  const label = totalCapacity > 0 && occupied >= totalCapacity ? 'Fully Occupied' : `${rate}% (${occupied}/${totalCapacity})`;
+  return {
+    total: totalCapacity,
+    occupied,
+    available: Math.max(0, totalCapacity - occupied),
+    rate,
+    label
+  };
+};
+const getPropertyInquiryCount = (propertyId, bookings = []) => bookings.filter((booking) => {
+  const bookingPropertyId = String(booking.property_id ?? booking.propertyId ?? '');
+  const status = String(booking.status ?? '').toLowerCase();
+  return String(propertyId) === bookingPropertyId && !['rejected', 'cancelled', 'archived'].includes(status);
+}).length;
+const escape = (value = '') => { const n = document.createElement('span'); n.textContent = value; return n.innerHTML; };
+const formatMonthlyRent = (value = '') => {
+  const raw = String(value ?? '').replace(/,/g, '');
+  const decimalIndex = raw.indexOf('.');
+  const whole = (decimalIndex < 0 ? raw : raw.slice(0, decimalIndex)).replace(/\D/g, '');
+  const fraction = decimalIndex < 0 ? '' : `.${raw.slice(decimalIndex + 1).replace(/\D/g, '').slice(0, 2)}`;
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${fraction}`;
+};
+const AMENITY_LABELS = {
+  wifi: 'Wi-Fi',
+  laundry: 'Laundry',
+  kitchen: 'Kitchen',
+  aircon: 'Aircon',
+  pets_allowed: 'Pets allowed',
+  dishwasher: 'Dishwasher',
+  balcony: 'Balcony',
+  parking: 'Parking',
+  utilities_included: 'Utilities included',
+  cable_ready: 'Cable ready'
+};
+const formatAmenityLabel = (value = '') => AMENITY_LABELS[String(value).toLowerCase()] ?? String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+const normalizeAmenities = (item = {}) => {
+  const raw = item.amenities;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map((value) => String(value).toLowerCase());
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((value) => String(value).toLowerCase());
+  } catch {}
+  return String(raw).split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
+};
+const renderAmenitiesChips = (item = {}) => normalizeAmenities(item)
+  .slice(0, 4)
+  .map((amenity) => `<span class="amenity-chip">${escape(formatAmenityLabel(amenity))}</span>`)
+  .join('');
+const clearSession = () => { localStorage.removeItem('dormhive.accessToken'); localStorage.removeItem('dormhive.user'); };
+
+function showPropertyPhotoViewer(property) {
+  const photos = normalizePropertyImages(property);
+  if (!photos.length) return;
+  let photoIndex = 0;
+  const viewer = document.createElement('dialog');
+  viewer.className = 'portfolio-photo-viewer';
+  const actions = document.createElement('div');
+  actions.className = 'portfolio-photo-viewer__actions';
+  const viewerImage = document.createElement('img');
+  viewerImage.className = 'portfolio-photo-viewer__image';
+  const stage = document.createElement('div');
+  stage.className = 'portfolio-photo-viewer__stage';
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'portfolio-photo-viewer__close';
+  closeButton.setAttribute('aria-label', 'Close photo viewer');
+  closeButton.title = 'Close viewer';
+  closeButton.innerHTML = '<i class="bi bi-x-lg" aria-hidden="true"></i>';
+  const previousButton = document.createElement('button');
+  previousButton.type = 'button';
+  previousButton.className = 'portfolio-photo-viewer__nav portfolio-photo-viewer__nav--previous';
+  previousButton.setAttribute('aria-label', 'View previous photo');
+  previousButton.title = 'Previous photo';
+  previousButton.innerHTML = '<i class="bi bi-chevron-left" aria-hidden="true"></i>';
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.className = 'portfolio-photo-viewer__nav portfolio-photo-viewer__nav--next';
+  nextButton.setAttribute('aria-label', 'View next photo');
+  nextButton.title = 'Next photo';
+  nextButton.innerHTML = '<i class="bi bi-chevron-right" aria-hidden="true"></i>';
+  const thumbnails = document.createElement('nav');
+  thumbnails.className = 'portfolio-photo-viewer__thumbnails';
+  thumbnails.setAttribute('aria-label', 'Property photos');
+  const thumbnailButtons = photos.map((photo, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'portfolio-photo-viewer__thumbnail';
+    button.dataset.photoIndex = String(index);
+    button.setAttribute('aria-label', `View photo ${index + 1}`);
+    button.setAttribute('aria-current', String(index === 0));
+    const thumbnailImage = document.createElement('img');
+    thumbnailImage.src = photo;
+    thumbnailImage.alt = '';
+    thumbnailImage.loading = 'lazy';
+    button.append(thumbnailImage);
+    thumbnails.append(button);
+    return button;
+  });
+
+  const createActionButton = (className, label, iconName) => {
+    const button = document.createElement('button');
+    button.className = `portfolio-photo-viewer__action ${className}`;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.innerHTML = `<i class="bi ${iconName}" aria-hidden="true"></i>`;
+    actions.append(button);
+    return button;
+  };
+  const downloadButton = createActionButton('portfolio-photo-viewer__download', 'Download photo', 'bi-download');
+  const shareButton = createActionButton('portfolio-photo-viewer__share', 'Share photo', 'bi-share');
+  actions.append(closeButton);
+
+  const renderPhoto = (nextIndex = photoIndex) => {
+    photoIndex = (nextIndex + photos.length) % photos.length;
+    viewerImage.src = photos[photoIndex];
+    viewerImage.alt = `${property.title || 'Property'} photo ${photoIndex + 1}`;
+    const hasMultiplePhotos = photos.length > 1;
+    previousButton.hidden = !hasMultiplePhotos;
+    nextButton.hidden = !hasMultiplePhotos;
+    thumbnailButtons.forEach((button, index) => {
+      const active = index === photoIndex;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-current', String(active));
+    });
+  };
+  thumbnails.addEventListener('click', (event) => {
+    const button = event.target.closest('.portfolio-photo-viewer__thumbnail');
+    if (button) renderPhoto(Number(button.dataset.photoIndex));
+  });
+  previousButton.addEventListener('click', () => renderPhoto(photoIndex - 1));
+  nextButton.addEventListener('click', () => renderPhoto(photoIndex + 1));
+  downloadButton.addEventListener('click', async () => {
+    try {
+      const response = await fetch(photos[photoIndex]);
+      if (!response.ok) throw new Error('Download failed');
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `${String(property.title || 'property').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}-photo-${photoIndex + 1}`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch {
+      window.open(photos[photoIndex], '_blank', 'noopener,noreferrer');
+    }
+  });
+  shareButton.addEventListener('click', async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: property.title || 'Property photo', url: photos[photoIndex] });
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(photos[photoIndex]);
+        showToast({ message: 'Photo link copied.', type: 'success' });
+      } else {
+        throw new Error('Sharing is unavailable.');
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') showToast({ message: 'Could not share this photo.', type: 'error' });
+    }
+  });
+  closeButton.addEventListener('click', () => viewer.close());
+  viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); });
+  viewer.addEventListener('close', () => viewer.remove(), { once: true });
+  viewer.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowLeft') previousButton.click();
+    if (event.key === 'ArrowRight') nextButton.click();
+  });
+  stage.append(viewerImage, previousButton, nextButton, actions);
+  viewer.append(stage, thumbnails);
+  document.body.append(viewer);
+  renderPhoto();
+  viewer.showModal();
+}
+
+function css() {
+  const stylesheet = new URL('./style/myListing.css', import.meta.url);
+  stylesheet.searchParams.set('v', 'portfolio-search-focus-neutral-1');
+  return loadOwnerStylesheet('listings', stylesheet);
+}
+
+export async function renderMyListing(root = document.querySelector('#app')) {
+  if (!root) throw new Error('My listings page requires #app.');
+  await Promise.all([css(), ensureOwnerSidebarStyles()]);
+  const routeSearch = typeof window.DORMHIVE_ROUTE_SEARCH === 'string' ? window.DORMHIVE_ROUTE_SEARCH : window.location.search;
+  const requestedPropertyId = new URLSearchParams(routeSearch).get('propertyId');
+  const requestedAction = new URLSearchParams(routeSearch).get('action');
+
+  root.innerHTML = `
+    <div class="owner-shell">
+      ${renderOwnerSidebar('myListing')}
+      <div class="owner-main">
+        <main class="portfolio-page">
+          <section class="portfolio-content">
+            <div class="portfolio-headline">
+              <div class="portfolio-headline-copy">
+                <p class="eyebrow">OWNER PORTFOLIO</p>
+                <h1>My Property Portfolio</h1>
+              </div>
+            </div>
+
+            <div class="portfolio-toolbar">
+              <label class="property-search">
+                <span aria-hidden="true"><i class="bi bi-search" aria-hidden="true"></i></span>
+                <input type="search" placeholder="Search property" />
+              </label>
+              <label class="property-filter">
+                <select>
+                  <option value="">All Property Type</option>
+                  <option value="bedspace">Bedspace</option>
+                  <option value="private_room">Solo Room</option>
+                  <option value="entire_unit">Studio Unit</option>
+                </select>
+              </label>
+              <button type="button" class="add-property">Add a New Property</button>
+            </div>
+            <div class="property-status-tabs" role="group" aria-label="Filter listings by archive status">
+              <button type="button" class="active" data-property-status="active" aria-pressed="true">Current listings</button>
+              <button type="button" data-property-status="archived" aria-pressed="false">Archived</button>
+            </div>
+
+            <div id="property-modal" class="property-modal" hidden>
+              <div class="property-modal-card">
+                <div class="property-modal-header">
+                  <h2>Create a listing</h2>
+                  <button type="button" class="modal-close">×</button>
+                </div>
+                <p id="property-form-message" class="form-message" hidden></p>
+
+                <div class="form-step-indicator" id="form-step-indicator">
+                  <div class="step-marker" data-step="1">
+                    <span class="step-number">1</span>
+                    <span class="step-label">Property Info</span>
+                  </div>
+                  <div class="step-connector"></div>
+                  <div class="step-marker" data-step="2">
+                    <span class="step-number">2</span>
+                    <span class="step-label">Location</span>
+                  </div>
+                  <div class="step-connector"></div>
+                  <div class="step-marker" data-step="3">
+                    <span class="step-number">3</span>
+                    <span class="step-label">Details</span>
+                  </div>
+                  <div class="step-connector"></div>
+                  <div class="step-marker" data-step="4">
+                    <span class="step-number">4</span>
+                    <span class="step-label">Review</span>
+                  </div>
+                </div>
+
+                <form id="property-form" enctype="multipart/form-data" novalidate>
+                  <input type="hidden" name="address" />
+                  <input type="hidden" name="municipality" />
+                  <input type="hidden" name="barangay" />
+                  <input type="hidden" name="latitude" />
+                  <input type="hidden" name="longitude" />
+
+                  <div id="property-form-step-1" class="property-form-step">
+                    <div class="form-step-title">
+                      <h3>Property Basics</h3>
+                      <p>Tell us about your property</p>
+                    </div>
+                    <div class="form-grid">
+                      <label class="full-span">Property title<input name="title" required maxlength="160"></label>
+                      <label>Property type<select name="roomType" required>
+                        <option value="">Select type</option>
+                        <option value="bedspace">Bedspace</option>
+                        <option value="private_room">Solo Room</option>
+                        <option value="entire_unit">Studio Unit</option>
+                        <option value="other">Other</option>
+                      </select><input name="customRoomType" type="text" maxlength="100" placeholder="Type your property type" aria-label="Custom property type" hidden></label>
+                      <label>Monthly price (₱)<input name="monthlyRent" type="text" inputmode="decimal" autocomplete="off" required></label>
+                      <label>Total rental slots<input name="totalSlots" type="number" min="1" value="1" required></label>
+                      <label>Gender preference<select name="genderPreference" required>
+                        <option value="">Select preference</option>
+                        <option value="co-ed">Co-Ed</option>
+                        <option value="male">Male Only</option>
+                        <option value="female">Female Only</option>
+                      </select></label>
+                    </div>
+                    <div class="modal-actions">
+                      <button type="button" class="btn-secondary modal-close">Cancel</button>
+                      <button type="button" class="btn-primary step-next" data-next-step="2">Next: Location</button>
+                    </div>
+                  </div>
+
+                  <div id="property-form-step-2" class="property-form-step" hidden>
+                    <div class="form-step-title">
+                      <h3>Location Details</h3>
+                      <p>Click or drag the marker to pin your property's exact location on the map.</p>
+                    </div>
+                    <div class="map-helper-bar">Click or drag the marker to pin your property's exact location on the map.</div>
+                    <div class="map-pin-stage" id="map-pin-stage">
+                      <div id="property-map" class="property-map" aria-label="Property location map"></div>
+                      <button type="button" class="map-current-location" id="use-current-location" aria-label="Return pin to your current location" title="Use my current location"><i class="bi bi-crosshair" aria-hidden="true"></i></button>
+                    </div>
+                    <div class="location-details-panel">
+                      <p class="location-status" id="location-status">Move the pin to detect the address.</p>
+                      <p class="location-preview" id="location-preview">Detected address will appear here after selecting the location.</p>
+                      <p class="location-coords" id="location-coords"></p>
+                    </div>
+                    <div class="modal-actions">
+                      <button type="button" class="btn-secondary step-back" data-back-step="1">Back</button>
+                      <button type="button" class="btn-primary step-next" data-next-step="3" id="location-next" disabled>Next: Amenities</button>
+                    </div>
+                  </div>
+
+                  <div id="property-form-step-3" class="property-form-step" hidden>
+                    <div class="form-step-title">
+                      <h3>Amenities &amp; Media</h3>
+                      <p>Add photos and describe your property</p>
+                    </div>
+                    <div class="amenities-section">
+                      <label class="section-label">Select available amenities</label>
+                      <div class="amenities-grid">
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="wifi"> <span>Wi-Fi</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="laundry"> <span>Laundry</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="kitchen"> <span>Kitchen</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="aircon"> <span>Aircon</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="pets_allowed"> <span>Pets allowed</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="dishwasher"> <span>Dishwasher</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="balcony"> <span>Balcony</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="parking"> <span>Parking</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="utilities_included"> <span>Utilities included</span></label>
+                        <label class="amenity-check"><input type="checkbox" name="amenities" value="cable_ready"> <span>Cable ready</span></label>
+                      </div>
+                    </div>
+                    <div class="ownership-proof-field">
+                      <label for="ownership-proof">Proof of ownership or authorization <span aria-hidden="true">*</span></label>
+                      <input id="ownership-proof" name="ownershipProof" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf">
+                      <small>Upload a title, tax declaration, or signed owner/manager authorization. JPEG, PNG, WEBP, or PDF up to 5 MB. Admins only can view this private document.</small>
+                    </div>
+                    <div class="media-dropzone">
+                      <input id="property-image" name="images" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple hidden>
+                      <label for="property-image" class="media-dropzone-label">
+                        <span class="dropzone-icon" aria-hidden="true">☁</span>
+                        <strong>Drag files to upload</strong>
+                        <span class="dropzone-or">or</span>
+                        <span class="browse-files">Browse Files</span>
+                        <span class="dropzone-hint">JPG, PNG, GIF or WEBP up to 2 MB each</span>
+                      </label>
+                      <div class="media-upload-status" aria-live="polite">Select as many photos as you need</div>
+                    </div>
+                    <div class="media-file-list" aria-live="polite"></div>
+                    <div class="form-grid">
+                      <label class="full-span">Description (optional)<textarea name="description" rows="4" placeholder="Describe your property, house rules, and what makes it special..."></textarea></label>
+                    </div>
+                    <div class="modal-actions">
+                      <button type="button" class="btn-secondary step-back" data-back-step="2">Back</button>
+                      <button type="button" class="btn-primary" id="review-listing">Review Listing</button>
+                    </div>
+                  </div>
+
+                  <div id="property-form-step-4" class="property-form-step" hidden>
+                    <div class="form-step-title">
+                      <h3>Review Your Listing</h3>
+                      <p>Check the information and photos before submitting.</p>
+                    </div>
+                    <div id="listing-review-summary" class="listing-review-summary"></div>
+                    <div class="modal-actions">
+                      <button type="button" class="btn-secondary step-back" data-back-step="3">Back to Edit</button>
+                      <button type="submit" class="btn-primary">Create Listing</button>
+                    </div>
+                  </div>
+                </form>
+
+              </div>
+            </div>
+
+            <div id="listing-success-modal" class="listing-success-modal" hidden>
+              <div class="listing-success-overlay"></div>
+              <div class="listing-success-card" role="dialog" aria-modal="true" aria-labelledby="listing-success-title">
+                <div class="listing-success-icon" aria-hidden="true"><span>✓</span></div>
+                <h2 id="listing-success-title">Success!</h2>
+                <p class="listing-success-message"></p>
+                <p class="listing-success-submessage">Your listing is now pending admin approval.</p>
+                <button type="button" class="listing-success-ok">OK</button>
+              </div>
+            </div>
+
+            <section class="portfolio-table-shell">
+              <div class="table-wrap">
+                <table class="portfolio-table">
+                  <thead>
+                    <tr>
+                      <th>Thumbnail</th>
+                      <th>Property Name &amp; Address</th>
+                      <th>Amenities</th>
+                      <th>Current Rent (PHP)</th>
+                      <th>Occupancy Rate</th>
+                      <th>Active Inquiries</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="portfolio-body"></tbody>
+                </table>
+              </div>
+              <nav class="pagination" aria-label="Property listings pagination">
+                <button type="button" data-page="prev">Previous</button>
+                <span class="pagination-page" aria-live="polite">0 properties</span>
+                <button type="button" data-page="next">Next</button>
+              </nav>
+            </section>
+
+            <div id="property-action-confirm" class="property-action-confirm" hidden>
+              <div class="property-action-confirm-overlay"></div>
+              <div class="property-action-confirm-card">
+                <div class="property-action-confirm-header">
+                  <h2 id="property-action-confirm-title">Archive Property</h2>
+                </div>
+                <div class="property-action-confirm-body">
+                  <p id="property-action-confirm-text">Are you sure you want to archive this property?</p>
+                </div>
+                <div class="property-action-confirm-footer">
+                  <button type="button" class="secondary-btn property-action-cancel">Cancel</button>
+                  <button type="button" class="primary-btn property-action-confirm-btn">Confirm Archive</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>`;
+
+  const portfolioBody = root.querySelector('#portfolio-body');
+  const addPropertyButton = root.querySelector('.add-property');
+  const propertyModal = root.querySelector('#property-modal');
+  const listingSuccessModal = root.querySelector('#listing-success-modal');
+  const listingSuccessMessage = root.querySelector('.listing-success-message');
+  const listingSuccessSubmessage = root.querySelector('.listing-success-submessage');
+  const listingSuccessOkButton = root.querySelector('.listing-success-ok');
+  const propertyForm = root.querySelector('#property-form');
+  const propertyFormStep1 = root.querySelector('#property-form-step-1');
+  const propertyFormStep2 = root.querySelector('#property-form-step-2');
+  const propertyFormStep3 = root.querySelector('#property-form-step-3');
+  const propertyFormStep4 = root.querySelector('#property-form-step-4');
+  const reviewListingButton = root.querySelector('#review-listing');
+  const listingReviewSummary = root.querySelector('#listing-review-summary');
+  const propertySearchInput = root.querySelector('.property-search input');
+  const propertyTypeFilter = root.querySelector('.property-filter select');
+  const propertyStatusTabs = root.querySelectorAll('[data-property-status]');
+  const formStepIndicator = root.querySelector('#form-step-indicator');
+  const propertyFormMessage = root.querySelector('#property-form-message');
+  const mediaDropzone = root.querySelector('.media-dropzone');
+  const imageInput = root.querySelector('#property-image');
+  const uploadStatus = root.querySelector('.media-upload-status');
+  const mediaFileList = root.querySelector('.media-file-list');
+  const closeButtons = root.querySelectorAll('.modal-close');
+  const paginationButtons = root.querySelectorAll('.pagination button[data-page]');
+  const mapContainer = root.querySelector('#property-map');
+  const mapStage = root.querySelector('#map-pin-stage');
+  const locationStatus = root.querySelector('#location-status');
+  const locationPreview = root.querySelector('#location-preview');
+  const locationCoords = root.querySelector('#location-coords');
+  const useCurrentLocationButton = root.querySelector('#use-current-location');
+  const locationNextButton = root.querySelector('#location-next');
+  const stepNextButtons = root.querySelectorAll('.step-next');
+  const stepBackButtons = root.querySelectorAll('.step-back');
+  const MAP_ZOOM = 17;
+  const MAP_DEFAULT_CENTER = { latitude: 14.5242, longitude: 121.0562 };
+  
+  // Property cache for reliable data retrieval
+  const propertyCache = new Map();
+  
+  let leafletMap = null;
+  let leafletMarker = null;
+  let leafletLoadingPromise = null;
+  let currentLocationAccuracy = null;
+  let activePage = 1;
+  let workflowPropertyId = null;
+  let workflowTitle = '';
+  let workflowPrice = 0;
+  let currentFormStep = 1;
+  let selectedPhotos = [];
+  let photoSelectionChanged = false;
+  const monthlyRentInput = propertyForm.elements.monthlyRent;
+  const roomTypeSelect = propertyForm.elements.roomType;
+  const customRoomTypeInput = propertyForm.elements.customRoomType;
+  const ownershipProofInput = propertyForm.elements.ownershipProof;
+  const isOwnershipProofRequired = () => {
+    if (!propertyForm.dataset.editingPropertyId || propertyForm.dataset.hasOwnershipProof !== 'true') return true;
+    return [
+      [propertyForm.elements.address.value, propertyForm.dataset.originalAddress],
+      [propertyForm.elements.municipality.value, propertyForm.dataset.originalMunicipality],
+      [propertyForm.elements.barangay.value, propertyForm.dataset.originalBarangay]
+    ].some(([current, original]) => String(current ?? '').trim().toLowerCase() !== String(original ?? '').trim().toLowerCase());
+  };
+  const syncCustomRoomType = () => {
+    const isOther = roomTypeSelect.value === 'other';
+    customRoomTypeInput.hidden = !isOther;
+    customRoomTypeInput.required = isOther;
+    if (!isOther) customRoomTypeInput.value = '';
+  };
+
+  roomTypeSelect.addEventListener('change', syncCustomRoomType);
+
+  monthlyRentInput.addEventListener('input', () => {
+    const rawValue = monthlyRentInput.value;
+    const cursor = monthlyRentInput.selectionStart ?? rawValue.length;
+    monthlyRentInput.value = formatMonthlyRent(rawValue);
+    const nextCursor = formatMonthlyRent(rawValue.slice(0, cursor)).length;
+    monthlyRentInput.setSelectionRange(nextCursor, nextCursor);
+  });
+
+  const setFormMessage = (message, type = 'error') => {
+    propertyFormMessage.hidden = false;
+    propertyFormMessage.textContent = message;
+    propertyFormMessage.className = `form-message ${type === 'success' ? 'success' : ''}`;
+  };
+
+  const formatFileSize = (bytes) => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  const renderUploadFiles = () => {
+    if (!mediaFileList) return;
+    mediaFileList.innerHTML = selectedPhotos.map((item) => `
+      <article class="media-file ${item.error ? 'is-error' : ''}" data-photo-id="${item.id}">
+        <img class="media-file-preview" src="${item.previewUrl}" alt="">
+        <div class="media-file-details">
+          <div class="media-file-heading"><strong title="${escape(item.file.name)}">${escape(item.file.name)}</strong><span>${formatFileSize(item.file.size)}</span></div>
+          <div class="media-progress-row"><div class="media-progress-track"><span style="width: ${item.progress}%"></span></div><strong class="media-progress-percent">${item.progress}%</strong></div>
+          <small class="media-file-status"><span class="media-file-status-icon">${item.error ? '!' : item.progress === 100 ? '✓' : '○'}</span>${escape(item.error || (item.progress === 100 ? 'Uploaded successfully' : item.uploading ? 'Uploading...' : 'Ready to upload'))}</small>
+        </div>
+        ${item.error ? `<button type="button" class="media-file-retry" data-photo-id="${item.id}">Retry</button>` : ''}
+        <button type="button" class="media-file-remove" data-photo-id="${item.id}" aria-label="Remove ${escape(item.file.name)}">&times;</button>
+      </article>`).join('');
+    uploadStatus.textContent = selectedPhotos.length === 1 ? '1 photo selected' : `${selectedPhotos.length} photos selected`;
+    uploadStatus.classList.toggle('selected', selectedPhotos.length > 0);
+  };
+
+  const syncInputFiles = () => {
+    if (!imageInput || typeof DataTransfer === 'undefined') return;
+    const dataTransfer = new DataTransfer();
+    selectedPhotos.filter((photo) => !photo.existing).forEach(({ file }) => dataTransfer.items.add(file));
+    imageInput.files = dataTransfer.files;
+  };
+
+  const addPhotos = (files) => {
+    const errors = [];
+    Array.from(files || []).forEach((file) => {
+      if (!SUPPORTED_PROPERTY_PHOTO_TYPES.includes(file.type)) {
+        errors.push(`${file.name}: unsupported file type.`);
+        return;
+      }
+      if (file.size > MAX_PROPERTY_PHOTO_SIZE) {
+        errors.push(`${file.name}: file exceeds the 2 MB limit.`);
+        return;
+      }
+      if (selectedPhotos.some((item) => !item.existing && item.file.name === file.name && item.file.size === file.size)) return;
+      const photo = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, previewUrl: URL.createObjectURL(file), progress: 0, error: '', uploading: false, uploadedUrl: '' };
+      selectedPhotos.push(photo);
+      photoSelectionChanged = true;
+      photo.uploadPromise = uploadPhoto(photo);
+    });
+    syncInputFiles();
+    renderUploadFiles();
+    if (errors.length) setFormMessage(errors.join(' '));
+  };
+
+  const resetPhotos = () => {
+    selectedPhotos.filter((photo) => !photo.existing).forEach(({ previewUrl }) => URL.revokeObjectURL(previewUrl));
+    selectedPhotos = [];
+    photoSelectionChanged = false;
+    if (imageInput) imageInput.value = '';
+    renderUploadFiles();
+  };
+
+  if (imageInput) {
+    imageInput.addEventListener('change', (event) => addPhotos(event.target.files));
+  }
+
+  if (mediaDropzone) {
+    ['dragenter', 'dragover'].forEach((eventName) => {
+      mediaDropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        mediaDropzone.classList.add('dragover');
+      });
+    });
+    ['dragleave', 'dragend'].forEach((eventName) => {
+      mediaDropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        mediaDropzone.classList.remove('dragover');
+      });
+    });
+    mediaDropzone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      mediaDropzone.classList.remove('dragover');
+      const files = event.dataTransfer?.files;
+      if (files?.length) {
+        addPhotos(files);
+      }
+    });
+  }
+
+  mediaFileList?.addEventListener('click', (event) => {
+    const retryButton = event.target.closest('.media-file-retry');
+    if (retryButton) {
+      const photo = selectedPhotos.find((item) => item.id === retryButton.dataset.photoId);
+      if (photo) photo.uploadPromise = uploadPhoto(photo);
+      return;
+    }
+    const button = event.target.closest('.media-file-remove');
+    if (!button) return;
+    const photo = selectedPhotos.find((item) => item.id === button.dataset.photoId);
+    if (photo) photoSelectionChanged = true;
+    if (photo && !photo.existing) URL.revokeObjectURL(photo.previewUrl);
+    selectedPhotos = selectedPhotos.filter((item) => item.id !== button.dataset.photoId);
+    syncInputFiles();
+    renderUploadFiles();
+  });
+
+  renderUploadFiles();
+
+  const updateStepIndicator = (step) => {
+    const stepMarkers = formStepIndicator.querySelectorAll('.step-marker');
+    stepMarkers.forEach((marker) => {
+      const markerStep = Number(marker.dataset.step);
+      marker.classList.toggle('active', markerStep === step);
+      marker.classList.toggle('completed', markerStep < step);
+    });
+  };
+
+  const showFormStep = (step) => {
+    currentFormStep = step;
+    propertyFormStep1.hidden = step !== 1;
+    propertyFormStep2.hidden = step !== 2;
+    propertyFormStep3.hidden = step !== 3;
+    propertyFormStep4.hidden = step !== 4;
+    updateStepIndicator(step);
+    propertyFormMessage.hidden = true;
+    if (step === 2) {
+      initializeMapStep();
+    }
+  };
+
+  const validateStep = (step) => {
+    if (step === 1) {
+      const title = propertyForm.elements.title.value.trim();
+      const roomType = propertyForm.elements.roomType.value;
+      const monthlyRent = Number(propertyForm.elements.monthlyRent.value.replace(/,/g, ''));
+      const totalSlots = propertyForm.elements.totalSlots.value;
+      const genderPreference = propertyForm.elements.genderPreference.value;
+      
+      if (!title) {
+        setFormMessage('Please enter a property title.');
+        return false;
+      }
+      if (!roomType) {
+        setFormMessage('Please select a property type.');
+        return false;
+      }
+      if (roomType === 'other' && !customRoomTypeInput.value.trim()) {
+        setFormMessage('Please enter your property type.');
+        customRoomTypeInput.focus();
+        return false;
+      }
+      if (!Number.isFinite(monthlyRent) || monthlyRent < 1) {
+        setFormMessage('Please enter a valid monthly price.');
+        return false;
+      }
+      if (!totalSlots || !Number.isInteger(Number(totalSlots)) || Number(totalSlots) < 1) {
+        setFormMessage('Please enter a valid number of rental slots.');
+        return false;
+      }
+      if (!genderPreference) {
+        setFormMessage('Please select a gender preference.');
+        return false;
+      }
+      return true;
+    }
+    if (step === 2) {
+      const address = propertyForm.elements.address.value.trim();
+      const municipality = propertyForm.elements.municipality.value.trim();
+      const latitude = propertyForm.elements.latitude.value;
+      const longitude = propertyForm.elements.longitude.value;
+      if (!address || !municipality || !latitude || !longitude) {
+        setFormMessage('Please pin the property location on the map to detect the address.');
+        return false;
+      }
+      return true;
+    }
+    if (step === 3) {
+      const proofRequired = isOwnershipProofRequired();
+      ownershipProofInput.required = proofRequired;
+      const ownershipProof = ownershipProofInput.files[0];
+      if (proofRequired && !ownershipProof) {
+        setFormMessage('Upload proof of ownership or authorization before submitting this listing.');
+        ownershipProofInput.focus();
+        return false;
+      }
+      if (ownershipProof && ownershipProof.size > 5 * 1024 * 1024) {
+        setFormMessage('Ownership proof must be no larger than 5 MB.');
+        ownershipProofInput.focus();
+        return false;
+      }
+      const imageField = propertyForm.elements.images;
+      const isEditing = !!propertyForm.dataset.editingPropertyId;
+      // Only require image when creating new property, not when editing
+      if (!isEditing && !imageField?.files?.length) {
+        setFormMessage('Please upload a property image.');
+        return false;
+      }
+      return true;
+    }
+    return true;
+  };
+
+  const renderListingReview = () => {
+    const roomType = roomTypeSelect.value === 'other'
+      ? customRoomTypeInput.value.trim()
+      : normalizePropertyTypeLabel(roomTypeSelect.value);
+    const amenities = Array.from(propertyForm.querySelectorAll('input[name="amenities"]:checked'))
+      .map((checkbox) => formatAmenityLabel(checkbox.value));
+    const photos = selectedPhotos.map((photo) => photo.previewUrl).filter(Boolean);
+    const values = [
+      ['Property type', roomType],
+      ['Monthly price', `PHP ${propertyForm.elements.monthlyRent.value || '0'} / month`],
+      ['Total rental slots', propertyForm.elements.totalSlots.value],
+      ['Gender preference', propertyForm.elements.genderPreference.selectedOptions[0]?.textContent || 'Not specified'],
+      ['Location', [propertyForm.elements.address.value, propertyForm.elements.barangay.value, propertyForm.elements.municipality.value].filter(Boolean).join(', ')],
+      ['Ownership proof', ownershipProofInput.files[0]?.name || (propertyForm.dataset.hasOwnershipProof === 'true' ? 'Existing proof on file (private)' : 'Missing')],
+      ['Amenities', amenities.join(', ') || 'None selected'],
+      ['Description', propertyForm.elements.description.value.trim() || 'No description provided']
+    ];
+
+    listingReviewSummary.innerHTML = `
+      <dl class="listing-review-facts">${values.map(([label, value]) => `<div><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>`).join('')}</dl>
+      <section class="listing-review-gallery" aria-label="Listing photos">
+        <h4>Photos <span>${photos.length}</span></h4>
+        ${photos.length ? `<div class="listing-review-photos">${photos.map((photo, index) => `<img src="${escape(photo)}" alt="Listing photo ${index + 1}" />`).join('')}</div>` : '<p>No photos selected.</p>'}
+      </section>`;
+  };
+
+  const closeModal = () => {
+    propertyModal.hidden = true;
+    propertyForm.reset();
+    propertyForm.elements.address.value = '';
+    propertyForm.elements.municipality.value = '';
+    propertyForm.elements.barangay.value = '';
+    propertyForm.elements.latitude.value = '';
+    propertyForm.elements.longitude.value = '';
+    currentLocationAccuracy = null;
+    syncCustomRoomType();
+    resetPhotos();
+    showFormStep(1);
+    propertyFormMessage.hidden = true;
+    propertyFormMessage.className = 'form-message';
+    workflowPropertyId = null;
+    workflowTitle = '';
+    workflowPrice = 0;
+    currentFormStep = 1;
+    locationStatus.textContent = 'Move the pin to detect the address.';
+    locationPreview.textContent = 'Detected address will appear here after selecting the location.';
+    locationCoords.textContent = '';
+    locationNextButton.disabled = true;
+    // Reset editing state
+    propertyForm.removeAttribute('data-editing-property-id');
+    delete propertyForm.dataset.hasOwnershipProof;
+    delete propertyForm.dataset.originalAddress;
+    delete propertyForm.dataset.originalMunicipality;
+    delete propertyForm.dataset.originalBarangay;
+    ownershipProofInput.required = true;
+    const modalHeader = propertyModal.querySelector('.property-modal-header h2');
+    const submitBtn = propertyForm.querySelector('button[type="submit"]');
+    modalHeader.textContent = 'Create a listing';
+    submitBtn.textContent = 'Create Listing';
+    reviewListingButton.textContent = 'Review Listing';
+  };
+
+  const loadLeafletAssets = () => {
+    if (leafletLoadingPromise) return leafletLoadingPromise;
+    leafletLoadingPromise = new Promise((resolve, reject) => {
+      if (window.L && window.L.map) {
+        resolve();
+        return;
+      }
+
+      const cssLink = document.createElement('link');
+      cssLink.rel = 'stylesheet';
+      cssLink.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.append(cssLink);
+
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Unable to load Leaflet assets.'));
+      document.body.append(script);
+    });
+    return leafletLoadingPromise;
+  };
+
+  const getCurrentUserCoordinates = () => new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+  });
+
+  const initializeLeafletMap = async () => {
+    if (!mapContainer) return;
+    await loadLeafletAssets();
+    const latitudeValue = propertyForm.elements.latitude.value.trim();
+    const longitudeValue = propertyForm.elements.longitude.value.trim();
+    const storedLatitude = Number(latitudeValue);
+    const storedLongitude = Number(longitudeValue);
+    const hasStoredCoordinates = latitudeValue !== '' && longitudeValue !== '' && Number.isFinite(storedLatitude) && Number.isFinite(storedLongitude);
+    let initialCoordinates = hasStoredCoordinates ? { latitude: storedLatitude, longitude: storedLongitude } : null;
+
+    if (!hasStoredCoordinates && !propertyForm.dataset.editingPropertyId) {
+      locationStatus.textContent = 'Finding your current location...';
+      initialCoordinates = await getCurrentUserCoordinates();
+    }
+    const hasInitialLocation = Boolean(initialCoordinates);
+    currentLocationAccuracy = initialCoordinates?.accuracy ?? null;
+    const mapCoordinates = initialCoordinates || MAP_DEFAULT_CENTER;
+    const initialCenter = [mapCoordinates.latitude, mapCoordinates.longitude];
+
+    if (!leafletMap) {
+      leafletMap = L.map(mapContainer, {
+        center: initialCenter,
+        zoom: MAP_ZOOM,
+        scrollWheelZoom: true,
+        zoomControl: true,
+      });
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(leafletMap);
+
+      leafletMarker = L.marker(initialCenter, {
+        draggable: true,
+      }).addTo(leafletMap);
+
+      leafletMarker.on('dragend', () => {
+        currentLocationAccuracy = null;
+        syncLocationFromMarker();
+      });
+      leafletMap.on('click', (event) => {
+        leafletMarker.setLatLng(event.latlng);
+        currentLocationAccuracy = null;
+        syncLocationFromMarker();
+      });
+    } else {
+      leafletMap.setView(initialCenter, MAP_ZOOM);
+      leafletMarker.setLatLng(initialCenter);
+    }
+
+    setTimeout(() => leafletMap?.invalidateSize(), 150);
+    return hasInitialLocation;
+  };
+
+  const initializeMapStep = async () => {
+    if (!mapContainer || !mapStage) return;
+    locationStatus.textContent = 'Move the pin to detect the address.';
+    locationPreview.textContent = 'Detected address will appear here after selecting the location.';
+    locationCoords.textContent = '';
+    locationNextButton.disabled = true;
+
+    try {
+      const hasInitialLocation = await initializeLeafletMap();
+      if (hasInitialLocation) {
+        syncLocationFromMarker();
+      } else {
+        locationStatus.textContent = 'Could not access your current location.';
+        locationPreview.textContent = 'Allow location access and retry, or move the pin to your property.';
+      }
+    } catch (error) {
+      locationStatus.textContent = 'Unable to load the map. Please try again later.';
+      setFormMessage('Could not initialize the location map.');
+    }
+  };
+
+  const pinCoordinates = () => {
+    if (leafletMarker && leafletMarker.getLatLng) {
+      const { lat, lng } = leafletMarker.getLatLng();
+      return { latitude: lat, longitude: lng };
+    }
+    return { latitude: MAP_DEFAULT_CENTER.latitude, longitude: MAP_DEFAULT_CENTER.longitude };
+  };
+
+  const updateLocationFields = (address = '', municipality = '', barangay = '', latitude = '', longitude = '') => {
+    propertyForm.elements.address.value = address;
+    propertyForm.elements.municipality.value = municipality;
+    propertyForm.elements.barangay.value = barangay;
+    propertyForm.elements.latitude.value = latitude;
+    propertyForm.elements.longitude.value = longitude;
+  };
+
+  const setLocationPreview = ({ displayName, addressLine, municipality, barangay, latitude, longitude }) => {
+    locationStatus.textContent = Number.isFinite(currentLocationAccuracy)
+      ? `Current location found (about ${Math.max(1, Math.round(currentLocationAccuracy))} m accuracy).`
+      : 'Location detected successfully.';
+    locationPreview.textContent = displayName || addressLine || 'Address detected.';
+    locationCoords.textContent = latitude && longitude ? `Latitude: ${latitude.toFixed(6)}, Longitude: ${longitude.toFixed(6)}` : '';
+    locationNextButton.disabled = !addressLine || !municipality || !latitude || !longitude;
+  };
+
+  const reverseGeocode = async (latitude, longitude) => {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(latitude)}&lon=${encodeURIComponent(longitude)}`);
+      if (!response.ok) throw new Error('Reverse geocoding failed.');
+      const data = await response.json();
+      const address = data.address ?? {};
+      const addressLine = [address.road, address.house_number, address.neighbourhood, address.suburb].filter(Boolean).join(' ') || data.display_name || '';
+      const municipality = address.city || address.town || address.village || address.county || address.state || '';
+      const barangay = address.suburb || address.quarter || address.hamlet || '';
+      const displayName = [addressLine, municipality, barangay].filter(Boolean).join(', ');
+      updateLocationFields(addressLine, municipality, barangay, latitude.toFixed(8), longitude.toFixed(8));
+      setLocationPreview({ displayName, addressLine, municipality, barangay, latitude, longitude });
+    } catch (error) {
+      locationStatus.textContent = 'Unable to detect address. Move the pin again.';
+      locationPreview.textContent = 'Move the marker to refresh the detected address.';
+      locationCoords.textContent = '';
+      locationNextButton.disabled = true;
+    }
+  };
+
+  const syncLocationFromMarker = () => {
+    const { latitude, longitude } = pinCoordinates();
+    reverseGeocode(latitude, longitude);
+  };
+
+  useCurrentLocationButton?.addEventListener('click', async () => {
+    useCurrentLocationButton.disabled = true;
+    locationStatus.textContent = 'Finding your current location...';
+    locationPreview.textContent = 'Waiting for your device location.';
+    const coordinates = await getCurrentUserCoordinates();
+    if (!coordinates) {
+      currentLocationAccuracy = null;
+      locationStatus.textContent = 'Could not access your current location.';
+      locationPreview.textContent = 'Allow location access and retry, or move the pin to your property.';
+      locationNextButton.disabled = true;
+      useCurrentLocationButton.disabled = false;
+      return;
+    }
+    currentLocationAccuracy = coordinates.accuracy;
+    const point = [coordinates.latitude, coordinates.longitude];
+    leafletMap?.setView(point, MAP_ZOOM);
+    leafletMarker?.setLatLng(point);
+    syncLocationFromMarker();
+    useCurrentLocationButton.disabled = false;
+  });
+
+  addPropertyButton?.addEventListener('click', () => {
+    propertyModal.hidden = false;
+    showFormStep(1);
+  });
+  if (requestedAction === 'create') addPropertyButton?.click();
+  closeButtons.forEach((button) => button.addEventListener('click', closeModal));
+  listingSuccessOkButton?.addEventListener('click', () => {
+    listingSuccessModal.hidden = true;
+    document.body.classList.remove('listing-success-modal-open');
+    load();
+  });
+
+  stepNextButtons.forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      const nextStep = Number(button.dataset.nextStep);
+      if (validateStep(currentFormStep)) {
+        showFormStep(nextStep);
+      }
+    });
+  });
+
+  stepBackButtons.forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      const backStep = Number(button.dataset.backStep);
+      showFormStep(backStep);
+    });
+  });
+
+  reviewListingButton?.addEventListener('click', () => {
+    if (!validateStep(3)) return;
+    renderListingReview();
+    showFormStep(4);
+  });
+
+  // Leaflet map interaction is handled internally by the map library.
+
+  const ITEMS_PER_PAGE = 5;
+
+  const getPagedProperties = (items = []) => {
+    const totalPages = Math.max(1, Math.ceil(items.length / ITEMS_PER_PAGE));
+    activePage = Math.min(Math.max(1, activePage), totalPages);
+    const startIndex = (activePage - 1) * ITEMS_PER_PAGE;
+    return items.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  };
+
+  paginationButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const page = button.dataset.page;
+      const totalPages = Math.max(1, Math.ceil(getFilteredPropertyRows().length / ITEMS_PER_PAGE));
+      if (page === 'prev') {
+        activePage = Math.max(1, activePage - 1);
+      } else if (page === 'next') {
+        activePage = Math.min(totalPages, activePage + 1);
+      } else {
+        activePage = Number(page);
+      }
+      activePage = Math.min(Math.max(1, activePage), totalPages);
+      applyPropertyTableState();
+    });
+  });
+
+  const uploadPhoto = (photo) => new Promise((resolve, reject) => {
+    photo.uploading = true;
+    photo.error = '';
+    photo.progress = 0;
+    renderUploadFiles();
+    const request = new XMLHttpRequest();
+    request.open('POST', `${API}/properties/uploads`);
+    request.timeout = 120000;
+    Object.entries(authHeaders()).forEach(([key, value]) => request.setRequestHeader(key, value));
+    request.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable) return;
+      photo.progress = Math.round((event.loaded / event.total) * 100);
+      renderUploadFiles();
+    });
+    request.addEventListener('load', () => {
+      let body = {};
+      try { body = JSON.parse(request.responseText || '{}'); } catch {}
+      if (request.status >= 200 && request.status < 300) {
+        photo.progress = 100;
+        photo.uploading = false;
+        photo.uploadedUrl = body.data?.imageUrl ?? '';
+        renderUploadFiles();
+        resolve(body);
+      } else {
+        console.error('[property upload] server rejected file', {
+          file: photo.file.name,
+          status: request.status,
+          response: request.responseText
+        });
+        photo.uploading = false;
+        photo.error = `Upload failed (${request.status || 'no response'})`;
+        renderUploadFiles();
+        reject(Object.assign(new Error(body.message ?? 'Upload failed'), { status: request.status, body }));
+      }
+    });
+    request.addEventListener('error', () => {
+      console.error('[property upload] network error', { file: photo.file.name, url: request.responseURL, status: request.status });
+      photo.uploading = false;
+      photo.error = 'Upload failed (network error)';
+      renderUploadFiles();
+      reject(new Error('Upload failed'));
+    });
+    request.addEventListener('timeout', () => {
+      console.error('[property upload] timeout', { file: photo.file.name, url: request.responseURL });
+      photo.uploading = false;
+      photo.error = 'Upload failed (timeout)';
+      renderUploadFiles();
+      reject(new Error('Upload failed'));
+    });
+    const formData = new FormData();
+    formData.append('image', photo.file);
+    request.send(formData);
+  });
+
+  propertyForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (currentFormStep !== 4 || !validateStep(3)) return;
+    const formData = new FormData(propertyForm);
+    formData.set('monthlyRent', String(formData.get('monthlyRent') ?? '').replace(/,/g, ''));
+    if (formData.get('roomType') === 'other') {
+      formData.set('roomType', customRoomTypeInput.value.trim());
+    }
+    formData.delete('customRoomType');
+    const editingPropertyId = propertyForm.dataset.editingPropertyId;
+    const isEditing = !!editingPropertyId;
+    
+    try {
+      const url = isEditing ? `${API}/properties/${editingPropertyId}` : `${API}/properties`;
+      const method = isEditing ? 'PUT' : 'POST';
+      
+      formData.delete('images');
+      formData.delete('image');
+      const ownershipProofFile = ownershipProofInput.files[0];
+      if (ownershipProofFile) formData.set('ownershipProof', ownershipProofFile);
+      else formData.delete('ownershipProof');
+      const newPhotos = selectedPhotos.filter((photo) => !photo.existing);
+      const uploadResults = await Promise.allSettled(newPhotos.map((photo) => photo.uploadPromise));
+      if (uploadResults.some((result) => result.status === 'rejected' || !result.value?.data?.imageUrl)) {
+        setFormMessage('Some photos failed to upload. Retry them individually before closing this form.');
+        return;
+      }
+      const photoUrls = selectedPhotos.map((photo) => photo.uploadedUrl).filter(Boolean);
+      if (photoUrls.length || photoSelectionChanged) {
+        formData.append('imageUrl', photoUrls[0] ?? '');
+        formData.append('images', JSON.stringify(photoUrls));
+      }
+      const finalResponse = await fetch(url, { method, headers: authHeaders(), body: formData });
+      let responseBody = {};
+      try { responseBody = await finalResponse.json(); } catch {}
+      if (!finalResponse.ok) {
+        throw Object.assign(new Error(responseBody.message || 'Unable to save property.'), {
+          status: finalResponse.status,
+          body: responseBody
+        });
+      }
+      listingSuccessMessage.textContent = isEditing ? 'Property updated successfully!' : 'Property created successfully!';
+      listingSuccessSubmessage.textContent = isEditing
+        ? 'Changes are now pending admin approval.'
+        : 'Your listing is now pending admin approval.';
+      closeModal();
+      listingSuccessModal.hidden = false;
+      document.body.classList.add('listing-success-modal-open');
+      listingSuccessOkButton.focus();
+    } catch (error) {
+      if (error.status === 401) {
+        clearSession();
+        setFormMessage('Your session has expired. Please sign in again.', 'error');
+        setTimeout(() => location.assign('#/login'), 800);
+        return;
+      }
+      setFormMessage(error.message);
+    }
+  });
+
+
+  let propertyRows = [];
+  let allPropertyRows = [];
+  let allBookingRows = [];
+  let pendingPropertyAction = null;
+
+  const normalizePropertyTypeValue = (value = '') => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw || raw === 'property type') return '';
+    const aliasMap = {
+      'bedspace': 'bedspace',
+      'solo room': 'private_room',
+      'private_room': 'private_room',
+      'private room': 'private_room',
+      'studio unit': 'entire_unit',
+      'entire_unit': 'entire_unit',
+      'entire unit': 'entire_unit'
+    };
+    return aliasMap[raw] ?? raw.replace(/\s+/g, '_');
+  };
+
+  const getFilteredPropertyRows = () => {
+    const searchValue = (propertySearchInput?.value ?? '').trim().toLowerCase();
+    const selectedType = normalizePropertyTypeValue(propertyTypeFilter?.value ?? '');
+
+    return allPropertyRows.filter((item) => {
+      const isArchived = item.status === 'archived';
+      const propertyType = normalizePropertyTypeValue(item.room_type || item.property_type || '');
+      const searchableText = [
+        item.title,
+        item.address,
+        item.municipality,
+        item.barangay,
+        item.room_type,
+        item.property_type,
+        propertyType
+      ].join(' ').toLowerCase();
+
+      const matchesSearch = !searchValue || searchableText.includes(searchValue);
+      const matchesType = !selectedType || propertyType === selectedType;
+      const matchesStatus = propertyStatus === 'archived' ? isArchived : !isArchived;
+      return matchesSearch && matchesType && matchesStatus;
+    });
+  };
+
+  const applyPropertyTableState = () => {
+    const filteredRows = getFilteredPropertyRows();
+    const pagedRows = getPagedProperties(filteredRows);
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / ITEMS_PER_PAGE));
+    root.querySelector('.pagination-page').textContent = String(activePage);
+    paginationButtons.forEach((button) => {
+      button.disabled = button.dataset.page === 'prev'
+        ? activePage <= 1
+        : activePage >= totalPages || filteredRows.length === 0;
+    });
+    renderRows(pagedRows);
+  };
+
+  const propertyActionConfirm = root.querySelector('#property-action-confirm');
+  const propertyActionConfirmTitle = root.querySelector('#property-action-confirm-title');
+  const propertyActionConfirmText = root.querySelector('#property-action-confirm-text');
+  const propertyActionConfirmCancelBtn = root.querySelector('.property-action-cancel');
+  const propertyActionConfirmActionBtn = root.querySelector('.property-action-confirm-btn');
+
+  const closePropertyActionConfirm = () => {
+    pendingPropertyAction = null;
+    propertyActionConfirm.hidden = true;
+  };
+
+  const openPropertyActionConfirm = (property, action) => {
+    pendingPropertyAction = { property, action };
+    const isRestore = action === 'restore';
+    propertyActionConfirmTitle.textContent = isRestore ? 'Restore Property' : 'Archive Property';
+    propertyActionConfirmText.textContent = isRestore
+      ? `Restore ${property.title || 'this property'} to your active listings?`
+      : `Are you sure you want to archive ${property.title || 'this property'}?`;
+    propertyActionConfirmActionBtn.textContent = isRestore ? 'Confirm Restore' : 'Confirm Archive';
+    propertyActionConfirmActionBtn.dataset.action = action;
+    propertyActionConfirm.hidden = false;
+  };
+
+  const renderRows = (items = []) => {
+    propertyRows = items;
+    propertyCache.clear();
+    const rows = items.map((item) => {
+      const occupancy = getOccupancySummary(item, allBookingRows);
+      const inquiryCount = getPropertyInquiryCount(item.id, allBookingRows);
+      const image = normalizePropertyImage(item);
+      propertyCache.set(String(item.id), item);
+      const titleText = escape(item.title || 'Untitled Property');
+      const propertyTypeLabel = normalizePropertyTypeLabel(item.room_type || item.property_type || '');
+      const statusKey = String(item.approval_status || item.status || 'pending').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const statusLabel = statusKey.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+      return `
+        <tr>
+          <td>${image ? `<img class="property-thumb" data-property-id="${escape(String(item.id ?? ''))}" src="${escape(image)}" alt="${escape(item.title || 'Property photo')}" />` : '<div class="thumb-placeholder"></div>'}</td>
+          <td>
+            <strong>${titleText}</strong><br />
+            <small><i class="bi bi-geo-alt-fill property-address-icon" aria-hidden="true"></i> ${escape([item.address, item.municipality, item.barangay].filter(Boolean).join(', ') || 'No address provided')}</small>
+          </td>
+          <td>${renderAmenitiesChips(item) || '<span class="empty-amenity">None</span>'}</td>
+          <td data-label="Current Rent (PHP)">₱${Number(item.monthly_rent ?? 0).toLocaleString()}/mo</td>
+          <td data-label="Occupancy Rate">
+            <div class="occupancy-cell">
+              <div class="progress-track"><span data-rate="${occupancy.rate}"></span></div>
+              <small>${escape(occupancy.label)}</small>
+            </div>
+          </td>
+          <td data-label="Active Inquiries"><span class="inquiry-count"><i class="bi bi-chat-dots" aria-hidden="true"></i>${inquiryCount} ${inquiryCount === 1 ? 'inquiry' : 'inquiries'}</span></td>
+          <td data-label="Status"><span class="property-approval-status is-${statusKey}">${escape(statusLabel)}</span></td>
+          <td>
+            <div class="property-row-actions">
+              <div class="property-inline-actions">
+                <a href="#/owner/inquiries?propertyId=${escape(String(item.id ?? ''))}" class="manage-link" data-property-id="${escape(String(item.id ?? ''))}">Manage</a>
+              </div>
+              <div class="property-more-wrap">
+                <button type="button" class="property-more-btn" data-property-id="${escape(String(item.id ?? ''))}" aria-label="More property actions">⋯</button>
+                <div class="property-menu" hidden>
+                  ${item.status !== 'archived' ? `<button type="button" class="property-menu-action edit-property" data-property-id="${escape(String(item.id ?? ''))}">Edit</button>` : ''}
+                  <button type="button" class="property-menu-action view-property" data-property-id="${escape(String(item.id ?? ''))}">View</button>
+                  ${item.status === 'archived'
+                    ? `<button type="button" class="property-menu-action" data-property-id="${escape(String(item.id ?? ''))}" data-action="restore">Restore</button>`
+                    : `<button type="button" class="property-menu-action" data-property-id="${escape(String(item.id ?? ''))}" data-action="archive">Archive</button>`}
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>`;
+    });
+    portfolioBody.innerHTML = rows.join('') || `<tr><td colspan="8" class="empty-row">${propertyStatus === 'archived' ? 'No archived properties yet.' : 'No active listings yet.'}</td></tr>`;
+    portfolioBody.querySelectorAll('.progress-track span').forEach((bar) => {
+      bar.style.setProperty('--rate', `${bar.dataset.rate}%`);
+    });
+  };
+
+  portfolioBody.addEventListener('click', (event) => {
+    const propertyThumb = event.target.closest('.property-thumb');
+    if (propertyThumb) {
+      const property = propertyCache.get(propertyThumb.dataset.propertyId);
+      if (property) showPropertyPhotoViewer(property);
+      return;
+    }
+    const menuButton = event.target.closest('.property-more-btn');
+    if (menuButton) {
+      event.stopPropagation();
+      const menu = menuButton.parentElement.querySelector('.property-menu');
+      const shouldOpen = menu.hidden;
+
+      portfolioBody.querySelectorAll('.property-menu').forEach((item) => {
+        if (item !== menu) {
+          item.hidden = true;
+          item.classList.remove('is-upward');
+        }
+      });
+
+      if (shouldOpen) {
+        const rect = menuButton.getBoundingClientRect();
+        menu.hidden = false;
+        const menuHeight = menu.offsetHeight || 170;
+        const menuWidth = menu.offsetWidth || 140;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        const shouldOpenUpward = spaceBelow < menuHeight && spaceAbove > menuHeight;
+        menu.classList.toggle('is-upward', shouldOpenUpward);
+        const top = shouldOpenUpward
+          ? Math.max(8, rect.top - menuHeight - 8)
+          : Math.min(window.innerHeight - menuHeight - 8, rect.bottom + 8);
+        const left = Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth));
+        menu.style.top = `${top}px`;
+        menu.style.left = `${left}px`;
+      } else {
+        menu.hidden = true;
+        menu.classList.remove('is-upward');
+        menu.style.removeProperty('top');
+        menu.style.removeProperty('left');
+      }
+      return;
+    }
+
+    const menuAction = event.target.closest('.property-menu-action');
+    if (menuAction) {
+      const menu = menuAction.closest('.property-menu');
+      if (menu) {
+        menu.hidden = true;
+        menu.classList.remove('is-upward');
+        menu.style.removeProperty('top');
+        menu.style.removeProperty('left');
+      }
+    }
+
+    const editBtn = event.target.closest('.edit-property');
+    const viewBtn = event.target.closest('.view-property');
+
+    if (menuAction && menuAction.dataset.action) {
+      const propertyId = String(menuAction.dataset.propertyId);
+      const property = propertyRows.find((item) => String(item.id) === propertyId);
+      if (property) {
+        openPropertyActionConfirm(property, menuAction.dataset.action);
+      }
+      return;
+    }
+
+    if (editBtn) {
+      event.preventDefault();
+      try {
+        const propertyId = String(editBtn.dataset.propertyId);
+        const propertyData = propertyCache.get(propertyId);
+        if (!propertyData) {
+          console.error('Property not found in cache:', propertyId);
+          setFormMessage('Unable to find property data. Please try again.');
+          return;
+        }
+        loadPropertyForEdit(propertyData);
+      } catch (error) {
+        console.error('Error loading property for edit:', error);
+        setFormMessage('Unable to load property for editing.');
+      }
+      return;
+    }
+
+    if (viewBtn) {
+      event.preventDefault();
+      try {
+        const propertyId = String(viewBtn.dataset.propertyId);
+        const propertyData = propertyCache.get(propertyId);
+        if (!propertyData) {
+          console.error('Property not found in cache:', propertyId);
+          setFormMessage('Unable to find property data. Please try again.');
+          return;
+        }
+        showPropertyDetails(propertyData);
+      } catch (error) {
+        console.error('Error loading property details:', error);
+        setFormMessage('Unable to load property details.');
+      }
+    }
+  });
+
+  propertyActionConfirmCancelBtn.addEventListener('click', closePropertyActionConfirm);
+  propertyActionConfirmActionBtn.addEventListener('click', async () => {
+    if (!pendingPropertyAction) return;
+
+    const { property, action } = pendingPropertyAction;
+    const propertyId = String(property.id);
+
+    try {
+      if (action === 'archive') {
+        const response = await fetch(`${API}/properties/${propertyId}`, {
+          method: 'PATCH',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'archived' })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(body.message || 'Unable to archive property.');
+        }
+        if (body.data?.status !== 'archived') {
+          throw new Error('The server did not mark this property as archived. Please try again.');
+        }
+        setPropertyStatus('archived');
+      } else if (action === 'restore') {
+        const response = await fetch(`${API}/properties/${propertyId}/restore`, {
+          method: 'PATCH',
+          headers: authHeaders()
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.message || 'Unable to restore property.');
+        }
+        setPropertyStatus('active');
+      }
+
+      closePropertyActionConfirm();
+      if (action === 'archive' || action === 'restore') {
+        await successDialog(action === 'archive' ? 'Property archived successfully.' : 'Property restored successfully.');
+      }
+      await load();
+      await updateListingCountsInSidebar();
+    } catch (error) {
+      console.error('Property action failed:', error);
+      setFormMessage(error.message || 'Unable to complete this action.');
+      closePropertyActionConfirm();
+    }
+  });
+
+  propertySearchInput?.addEventListener('input', () => {
+    activePage = 1;
+    applyPropertyTableState();
+  });
+
+  propertyTypeFilter?.addEventListener('change', () => {
+    activePage = 1;
+    applyPropertyTableState();
+  });
+
+  let propertyStatus = 'active';
+  const setPropertyStatus = (status) => {
+    propertyStatus = status;
+    activePage = 1;
+    propertyStatusTabs.forEach((tab) => {
+      const selected = tab.dataset.propertyStatus === status;
+      tab.classList.toggle('active', selected);
+      tab.setAttribute('aria-pressed', String(selected));
+    });
+    applyPropertyTableState();
+  };
+
+  propertyStatusTabs.forEach((button) => button.addEventListener('click', () => {
+    setPropertyStatus(button.dataset.propertyStatus);
+  }));
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.property-more-btn') && !event.target.closest('.property-menu')) {
+      portfolioBody.querySelectorAll('.property-menu').forEach((menu) => {
+        menu.hidden = true;
+      });
+    }
+  });
+
+  const loadPropertyForEdit = (propertyData) => {
+    resetPhotos();
+    let existingImages = propertyData.images;
+    if (typeof existingImages === 'string') {
+      try { existingImages = JSON.parse(existingImages); } catch { existingImages = []; }
+    }
+    const existingPhotoUrls = [...new Set([
+      propertyData.image_url,
+      ...(Array.isArray(existingImages) ? existingImages : [])
+    ].filter((image) => typeof image === 'string' && image.trim()))];
+    selectedPhotos = existingPhotoUrls.map((url, index) => ({
+      id: `existing-${propertyData.id}-${index}`,
+      file: { name: url.split('/').pop() || 'Property photo', size: 0 },
+      previewUrl: resolveImageUrl(url),
+      uploadedUrl: url,
+      progress: 100,
+      error: '',
+      uploading: false,
+      existing: true
+    }));
+    renderUploadFiles();
+
+    // Populate the form with existing property data
+    const form = propertyForm;
+    form.elements.title.value = propertyData.title || '';
+    const savedRoomType = String(propertyData.room_type || propertyData.property_type || '').trim();
+    const normalizedRoomType = normalizePropertyTypeValue(savedRoomType);
+    const standardRoomTypes = ['bedspace', 'private_room', 'entire_unit'];
+    if (standardRoomTypes.includes(normalizedRoomType)) {
+      form.elements.roomType.value = normalizedRoomType;
+      customRoomTypeInput.value = '';
+    } else if (savedRoomType) {
+      form.elements.roomType.value = 'other';
+      customRoomTypeInput.value = savedRoomType;
+    } else {
+      form.elements.roomType.value = '';
+      customRoomTypeInput.value = '';
+    }
+    syncCustomRoomType();
+    form.elements.monthlyRent.value = formatMonthlyRent(propertyData.monthly_rent || '');
+    form.elements.totalSlots.value = propertyData.total_slots || '1';
+    form.elements.genderPreference.value = propertyData.gender_preference || '';
+    form.elements.address.value = propertyData.address || '';
+    form.elements.municipality.value = propertyData.municipality || '';
+    form.elements.barangay.value = propertyData.barangay || '';
+    form.elements.latitude.value = propertyData.latitude || '';
+    form.elements.longitude.value = propertyData.longitude || '';
+    form.elements.description.value = propertyData.description || '';
+    form.dataset.hasOwnershipProof = String(propertyData.has_ownership_proof === true || Number(propertyData.has_ownership_proof) === 1);
+    form.dataset.originalAddress = propertyData.address || '';
+    form.dataset.originalMunicipality = propertyData.municipality || '';
+    form.dataset.originalBarangay = propertyData.barangay || '';
+    ownershipProofInput.required = form.dataset.hasOwnershipProof !== 'true';
+    
+    // Set amenities
+    const amenitiesCheckboxes = form.querySelectorAll('input[name="amenities"]');
+    const propertyAmenities = normalizeAmenities(propertyData);
+    amenitiesCheckboxes.forEach((checkbox) => {
+      checkbox.checked = propertyAmenities.includes(checkbox.value.toLowerCase());
+    });
+    
+    // Update modal title and button text for edit mode
+    const modalHeader = propertyModal.querySelector('.property-modal-header h2');
+    const submitBtn = form.querySelector('button[type="submit"]');
+    modalHeader.textContent = 'Edit Property Listing';
+    submitBtn.textContent = 'Update Listing';
+    reviewListingButton.textContent = 'Review Changes';
+    form.dataset.editingPropertyId = propertyData.id;
+    
+    // Show modal and start from step 1
+    propertyModal.hidden = false;
+    showFormStep(1);
+  };
+
+  const showPropertyDetails = (propertyData) => {
+    const galleryImages = normalizePropertyImages(propertyData);
+    const photos = galleryImages.length ? galleryImages : [DEFAULT_IMAGE_PLACEHOLDER];
+    const availableSlots = Math.max(0, Number(propertyData.available_slots ?? propertyData.total_slots ?? 0));
+    const owner = user();
+    const ownerName = propertyData.owner_name
+      || propertyData.owner?.name
+      || [propertyData.owner?.first_name, propertyData.owner?.last_name].filter(Boolean).join(' ')
+      || [owner.first_name, owner.last_name].filter(Boolean).join(' ')
+      || owner.name
+      || 'N/A';
+    const detailsModal = document.createElement('div');
+    detailsModal.className = 'property-details-modal';
+    detailsModal.innerHTML = `
+      <div class="property-details-card">
+        <div class="property-details-header">
+          <h2><span class="property-details-header-icon"><i class="bi bi-house-door-fill" aria-hidden="true"></i></span>Property Details</h2>
+          <button type="button" class="modal-close" aria-label="Close property details">×</button>
+        </div>
+        <div class="property-details-content">
+          <div class="property-details-gallery" aria-label="Property photos">
+            <div class="property-details-gallery-stage">
+              <img class="property-details-main-image" src="${escape(photos[0])}" alt="${escape(propertyData.title || 'Property')} photo 1">
+              <span class="property-details-image-counter" aria-live="polite">1 / ${photos.length}</span>
+              <button type="button" class="property-details-gallery-nav previous" aria-label="Previous photo">&#8249;</button>
+              <button type="button" class="property-details-gallery-nav next" aria-label="Next photo">&#8250;</button>
+            </div>
+            <div class="property-details-thumbnails" role="group" aria-label="Property photo thumbnails">
+              ${photos.map((image, index) => `<button type="button" class="property-details-thumbnail${index === 0 ? ' active' : ''}" data-gallery-index="${index}" aria-label="View photo ${index + 1}" aria-current="${index === 0 ? 'true' : 'false'}"><img src="${escape(image)}" alt=""></button>`).join('')}
+          </div>
+          </div>
+          <div class="property-details-information">
+            <div class="property-details-heading">
+              <h3>${escape(propertyData.title || 'Property')}</h3>
+              <strong>PHP ${Number(propertyData.monthly_rent ?? 0).toLocaleString('en-PH')} / month</strong>
+            </div>
+            <div class="property-details-facts">
+              <div class="details-section"><span class="details-label"><i class="bi bi-geo-alt-fill" aria-hidden="true"></i>Location</span><p>${escape([propertyData.address, propertyData.barangay, propertyData.municipality].filter(Boolean).join(', ') || 'No address')}</p></div>
+              <div class="details-section"><span class="details-label"><i class="bi bi-house-fill" aria-hidden="true"></i>Room Type</span><p>${escape(normalizePropertyTypeLabel(propertyData.room_type || propertyData.property_type || 'N/A')) || 'N/A'}</p></div>
+              <div class="details-section"><span class="details-label"><i class="bi bi-door-open-fill" aria-hidden="true"></i>Availability</span><p>${propertyData.total_slots != null ? (availableSlots > 0 ? `${availableSlots} slot${availableSlots === 1 ? '' : 's'} available` : 'No slots available') : 'N/A'}</p></div>
+              <div class="details-section"><span class="details-label"><i class="bi bi-gender-ambiguous" aria-hidden="true"></i>Gender Preference</span><p>${escape(String(propertyData.gender_preference || 'Any').replaceAll('_', ' '))}</p></div>
+              <div class="details-section"><span class="details-label"><i class="bi bi-person-fill" aria-hidden="true"></i>Owner</span><p>${escape(ownerName)}</p></div>
+              <div class="details-section details-amenities"><span class="details-label"><i class="bi bi-stars" aria-hidden="true"></i>Amenities</span><div class="amenities-list">${renderAmenitiesChips(propertyData) || '<span>None</span>'}</div></div>
+            </div>
+            <div class="details-section property-details-description">
+              <span class="details-label"><i class="bi bi-card-text" aria-hidden="true"></i>Description</span>
+              <p>${escape(propertyData.description || 'No description provided')}</p>
+            </div>
+          </div>
+        </div>
+        <div class="property-details-actions">
+          <button type="button" class="btn-secondary close-details">Close</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.append(detailsModal);
+    
+    // Handle close button
+    detailsModal.querySelector('.modal-close').addEventListener('click', () => detailsModal.remove());
+    detailsModal.querySelector('.close-details').addEventListener('click', () => detailsModal.remove());
+
+    const mainImage = detailsModal.querySelector('.property-details-main-image');
+    const counter = detailsModal.querySelector('.property-details-image-counter');
+    const thumbnails = Array.from(detailsModal.querySelectorAll('.property-details-thumbnail'));
+    let photoIndex = 0;
+    const showPhoto = (nextIndex) => {
+      photoIndex = (nextIndex + photos.length) % photos.length;
+      mainImage.src = photos[photoIndex];
+      mainImage.alt = `${propertyData.title || 'Property'} photo ${photoIndex + 1}`;
+      counter.textContent = `${photoIndex + 1} / ${photos.length}`;
+      thumbnails.forEach((thumbnail, index) => {
+        const active = index === photoIndex;
+        thumbnail.classList.toggle('active', active);
+        thumbnail.setAttribute('aria-current', String(active));
+      });
+    };
+    detailsModal.querySelector('.property-details-gallery-nav.previous').addEventListener('click', () => showPhoto(photoIndex - 1));
+    detailsModal.querySelector('.property-details-gallery-nav.next').addEventListener('click', () => showPhoto(photoIndex + 1));
+    thumbnails.forEach((thumbnail) => thumbnail.addEventListener('click', () => showPhoto(Number(thumbnail.dataset.galleryIndex))));
+    mainImage.addEventListener('click', () => showPropertyPhotoViewer(propertyData));
+    
+    // Close on backdrop click
+    detailsModal.addEventListener('click', (event) => {
+      if (event.target === detailsModal) detailsModal.remove();
+    });
+  };
+
+  const load = async () => {
+    try {
+      let propertiesResponse;
+      let bookingsResponse;
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        propertiesResponse = await fetch(`${API}/properties?limit=100`, { headers: authHeaders() });
+        if (propertiesResponse.status !== 429 || attempt === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        bookingsResponse = await fetch(`${API}/bookings`, { headers: authHeaders() });
+        if (bookingsResponse.status !== 429 || attempt === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+
+      const propertiesBody = await propertiesResponse.json();
+      const bookingsBody = await bookingsResponse.json();
+
+      if (!propertiesResponse.ok) {
+        if (propertiesResponse.status === 401) {
+          clearSession();
+          portfolioBody.innerHTML = '<tr><td colspan="7" class="empty-row">Your session has expired. Please sign in again.</td></tr>';
+          setTimeout(() => location.assign('#/login'), 800);
+          return;
+        }
+        throw new Error(propertiesBody.message ?? 'Unable to load listings.');
+      }
+
+      if (!bookingsResponse.ok) {
+        if (bookingsResponse.status === 401) {
+          clearSession();
+          portfolioBody.innerHTML = '<tr><td colspan="7" class="empty-row">Your session has expired. Please sign in again.</td></tr>';
+          setTimeout(() => location.assign('#/login'), 800);
+          return;
+        }
+        throw new Error(bookingsBody.message ?? 'Unable to load inquiries.');
+      }
+
+      const items = (propertiesBody.data ?? []).filter((item) => Number(item.owner_id) === Number(user().id));
+      allPropertyRows = items;
+      allBookingRows = Array.isArray(bookingsBody.data) ? bookingsBody.data : [];
+      applyPropertyTableState();
+      if (requestedPropertyId && requestedAction === 'edit') {
+        const requestedProperty = allPropertyRows.find((item) => String(item.id) === String(requestedPropertyId));
+        if (requestedProperty) loadPropertyForEdit(requestedProperty);
+      }
+      await updateListingCountsInSidebar();
+    } catch (error) {
+      portfolioBody.innerHTML = `<tr><td colspan="7" class="empty-row">${escape(error.message)}</td></tr>`;
+    }
+  };
+
+  load();
+}
