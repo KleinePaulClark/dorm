@@ -172,7 +172,7 @@ function loadStyle() {
   const stylePromises = [];
 
   const dashboardStylesheet = new URL('./style/dashboardTenant.css', import.meta.url);
-  dashboardStylesheet.searchParams.set('v', 'tenant-search-focus-neutral-1');
+  dashboardStylesheet.searchParams.set('v', 'tenant-listings-lazy-scroll-1');
   stylePromises.push(loadTenantStylesheet('dashboard', dashboardStylesheet));
 
   if (!document.querySelector('[data-tenant-style="notifications"]')) {
@@ -1175,7 +1175,7 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
           <div class="map-column">
             <div class="map-stack">
               ${renderMapPanelShell({
-                title: 'Campus map overview',
+                title: 'Map Overview',
                 buttonLabel: 'View nearby listings',
                 statusText: 'Loading real listings from the database...',
                 query: 'DLSU, Manila, Philippines'
@@ -1367,6 +1367,12 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
   }, 15000);
 
   const state = { all: [], visible: [] };
+  const listingPageSize = 12;
+  let listingPage = 0;
+  let hasMoreListings = true;
+  let isLoadingListings = false;
+  let listingLoadError = '';
+  let cardsObserver;
   const routeSearch = typeof window.DORMHIVE_ROUTE_SEARCH === 'string' ? window.DORMHIVE_ROUTE_SEARCH : window.location.search;
   const routeParams = new URLSearchParams(routeSearch);
   const requestedPropertyId = routeParams.get('propertyId');
@@ -1377,6 +1383,7 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
   const range = root.querySelector('#range');
   const rangeNote = root.querySelector('#range-note');
   const cards = root.querySelector('#featured-cards');
+  const listingScrollContainer = root.querySelector('main');
   const clearButton = root.querySelector('#clear');
   const applyButton = root.querySelector('#apply-filters');
   const mapStatus = root.querySelector('#map-status');
@@ -1384,7 +1391,10 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
   const mapFrame = root.querySelector('#tenant-map');
   const scheduleNotice = root.querySelector('#tenant-schedule-notice');
   const scheduleNoticeMessage = root.querySelector('#tenant-schedule-notice-message');
-  const mapInitialization = initLeafletMap(root.querySelector('.map'), []).catch((error) => {
+  const mapInitialization = initLeafletMap(root.querySelector('.map'), [], {
+    viewStorageKey: 'dormhive.tenant.mapView',
+    nearbyPlaces: true
+  }).catch((error) => {
     console.warn('Unable to initialize tenant map:', error);
     return null;
   });
@@ -1410,6 +1420,42 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
     cards.appendChild(skeleton);
     if (mapStatus) mapStatus.textContent = 'Loading nearby listings...';
   };
+
+  const loadNextListingPage = async () => {
+    if (isLoadingListings || !hasMoreListings) return;
+    isLoadingListings = true;
+    listingLoadError = '';
+    const loadingButton = cards?.querySelector('.listing-load-more button');
+    if (loadingButton) {
+      loadingButton.disabled = true;
+      loadingButton.textContent = 'Loading more listings...';
+    }
+    try {
+      const nextPage = listingPage + 1;
+      const response = await api(`/properties?page=${nextPage}&limit=${listingPageSize}&status=approved`);
+      const pageItems = Array.isArray(response.data) ? response.data.filter((item) => isPropertyVisibleToTenant(item)) : [];
+      const knownIds = new Set(state.all.map((item) => String(item.id)));
+      state.all.push(...pageItems.filter((item) => !knownIds.has(String(item.id))));
+      listingPage = nextPage;
+      const total = Number(response.pagination?.total);
+      hasMoreListings = Number.isFinite(total)
+        ? listingPage * listingPageSize < total
+        : pageItems.length === listingPageSize;
+      state.visible = state.all;
+      syncMapLocation(state.all);
+    } catch (error) {
+      listingLoadError = error.message || 'Unable to load more listings.';
+    } finally {
+      isLoadingListings = false;
+      renderCards();
+    }
+  };
+
+  if ('IntersectionObserver' in window) {
+    cardsObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadNextListingPage();
+    }, { root: listingScrollContainer, rootMargin: '320px 0px', threshold: 0 });
+  }
 
   const updateRangeNote = () => {
     maxPrice.value = String(range.value || MAX_LISTING_PRICE);
@@ -1795,7 +1841,20 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
   const renderFeaturedCards = (items = []) => {
     if (!cards) return;
     if (!items.length) {
-      cards.innerHTML = '<div class="empty">No properties found</div>';
+      cards.innerHTML = `<div class="empty">${hasMoreListings ? 'No listings match yet. Scroll to load more.' : 'No properties found'}</div>`;
+      if (hasMoreListings || listingLoadError) {
+        const loadMore = document.createElement('div');
+        loadMore.className = 'listing-load-more';
+        loadMore.setAttribute('aria-live', 'polite');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = listingLoadError ? 'Could not load more listings. Try again' : 'Load more listings';
+        button.disabled = isLoadingListings;
+        button.addEventListener('click', loadNextListingPage);
+        loadMore.append(button);
+        cards.append(loadMore);
+        if (cardsObserver && !isLoadingListings && !listingLoadError) cardsObserver.observe(loadMore);
+      }
       return;
     }
 
@@ -1817,7 +1876,7 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
       return `
         <article class="listing" data-id="${item.id}">
           <div class="photo p${index % 4}">
-            <img src="${esc(galleryImages[0])}" alt="${esc(item.title || 'Listing photo')}" class="listing-photo" />
+            <img src="${esc(galleryImages[0])}" alt="${esc(item.title || 'Listing photo')}" class="listing-photo" loading="lazy" decoding="async" />
             <em>${esc(item.status === 'approved' ? 'Verified' : (item.status || 'Approved'))}</em>
             <button type="button" class="favorite-toggle${isFavorite ? ' is-favorited' : ''}" data-property-id="${item.id}" aria-label="${isFavorite ? 'Remove from favorites' : 'Save listing'}" aria-pressed="${isFavorite}">${heartIcon(isFavorite)}</button>
             <button type="button" class="favorite-toggle${isFavorite ? ' is-favorited' : ''}" data-property-id="${item.id}" aria-label="${isFavorite ? 'Remove from favorites' : 'Save listing'}" aria-pressed="${isFavorite}">${heartIcon(isFavorite)}</button>
@@ -1898,6 +1957,22 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
         if (property) openPropertyDetails(property);
       });
     });
+
+    if (hasMoreListings || isLoadingListings || listingLoadError) {
+      const loadMore = document.createElement('div');
+      loadMore.className = 'listing-load-more';
+      loadMore.setAttribute('aria-live', 'polite');
+      const loadMoreButton = document.createElement('button');
+      loadMoreButton.type = 'button';
+      loadMoreButton.textContent = listingLoadError
+        ? 'Could not load more listings. Try again'
+        : isLoadingListings ? 'Loading more listings...' : 'Load more listings';
+      loadMoreButton.disabled = isLoadingListings;
+      loadMoreButton.addEventListener('click', loadNextListingPage);
+      loadMore.append(loadMoreButton);
+      cards.append(loadMore);
+      if (cardsObserver && !isLoadingListings && !listingLoadError) cardsObserver.observe(loadMore);
+    }
   };
 
   const renderCards = () => {
@@ -2075,15 +2150,17 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
   const load = async () => {
     renderSkeletonState();
     try {
-      // Only load approved properties for tenants (Featured Listings and map markers)
       const [response, bookingsResponse] = await Promise.all([
-        api('/properties?limit=100&status=approved'),
+        api(`/properties?page=1&limit=${listingPageSize}&status=approved`),
         api('/bookings').catch((error) => {
           console.warn('Unable to load approved booking schedules:', error);
           return { data: [] };
         })
       ]);
       state.all = Array.isArray(response.data) ? response.data.filter((item) => isPropertyVisibleToTenant(item)) : [];
+      listingPage = 1;
+      const total = Number(response.pagination?.total);
+      hasMoreListings = Number.isFinite(total) ? listingPage * listingPageSize < total : state.all.length === listingPageSize;
       state.visible = state.all;
       renderScheduleNotice(Array.isArray(bookingsResponse.data) ? bookingsResponse.data : []);
       await mapInitialization;
@@ -2102,6 +2179,24 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
     }
   };
 
+  const refreshLoadedListingPages = async () => {
+    if (!root.isConnected || isLoadingListings || listingPage < 1) return;
+    try {
+      const pages = Array.from({ length: listingPage }, (_, index) => index + 1);
+      const responses = await Promise.all(pages.map((page) => api(`/properties?page=${page}&limit=${listingPageSize}&status=approved`)));
+      state.all = responses.flatMap((response) => Array.isArray(response.data)
+        ? response.data.filter((item) => isPropertyVisibleToTenant(item))
+        : []);
+      const total = Number(responses[0]?.pagination?.total);
+      hasMoreListings = Number.isFinite(total) ? listingPage * listingPageSize < total : state.all.length >= listingPage * listingPageSize;
+      state.visible = state.all;
+      syncMapLocation(state.all);
+      renderCards();
+    } catch (error) {
+      console.warn('Unable to refresh approved listings:', error);
+    }
+  };
+
   syncTenantProfileUi(root, user);
   updateRangeNote();
   load();
@@ -2109,5 +2204,11 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
   // Periodically refresh approved listings so admin status changes propagate to tenants.
   // This keeps Featured Listings and map markers in sync when an admin approves/rejects properties.
   const POLL_INTERVAL = 15000; // 15 seconds
-  setInterval(load, POLL_INTERVAL);
+  const listingPoll = setInterval(() => {
+    if (!tenantApp.isConnected) {
+      clearInterval(listingPoll);
+      return;
+    }
+    refreshLoadedListingPages();
+  }, POLL_INTERVAL);
 }

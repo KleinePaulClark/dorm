@@ -630,20 +630,39 @@ legend {
   margin-bottom: 16px;
 }
 .cards {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   align-items: stretch;
   gap: 14px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   padding-bottom: 7px;
-  scroll-snap-type: x proximity;
+}
+.listing-load-more {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: center;
+  padding: 8px 0;
+}
+.listing-load-more button {
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid #d5e1dc;
+  border-radius: 8px;
+  background: #fff;
+  color: #35584a;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.listing-load-more button:disabled {
+  cursor: wait;
+  opacity: .7;
 }
 .listing {
   display: flex;
   flex-direction: column;
-  flex: 0 0 220px;
-  width: 220px;
-  min-width: 220px;
+  width: 100%;
+  min-width: 0;
   height: 420px;
   overflow: hidden;
   border: 1px solid #e3eae7;
@@ -1223,26 +1242,17 @@ legend {
   }
 
   .dh-dashboard .cards {
-    display: flex;
-    flex-direction: row;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+    justify-content: stretch;
     gap: 10px;
     width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
     padding: 0 0 8px;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-
-  .dh-dashboard .cards::-webkit-scrollbar {
-    display: none;
   }
 
   .dh-dashboard .listing {
-    flex: 0 0 min(42vw, 320px);
-    width: min(42vw, 320px);
+    width: 100%;
     min-width: 0;
     height: 280px;
     min-height: 0;
