@@ -418,6 +418,127 @@ async function checkAndFixDatabase() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     await query('ALTER TABLE media_files ADD COLUMN IF NOT EXISTS is_private TINYINT(1) NOT NULL DEFAULT 0');
 
+    await query(`CREATE TABLE IF NOT EXISTS property_categories (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      slug VARCHAR(80) NOT NULL UNIQUE,
+      name VARCHAR(120) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    const categories = [
+      ['bedspace', 'Bedspace'],
+      ['dormitory', 'Dormitory'],
+      ['boarding_house', 'Boarding House'],
+      ['room_for_rent', 'Room for Rent'],
+      ['shared_apartment', 'Shared Apartment'],
+      ['studio_unit', 'Studio Unit'],
+      ['condominium', 'Condominium'],
+      ['apartment', 'Apartment'],
+      ['townhouse', 'Townhouse'],
+      ['house', 'House'],
+      ['duplex', 'Duplex'],
+      ['loft', 'Loft'],
+      ['penthouse', 'Penthouse'],
+      ['staff_house', 'Staff House'],
+      ['other', 'Other']
+    ];
+    for (const [slug, name] of categories) {
+      await query('INSERT INTO property_categories (slug, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)', [slug, name]);
+    }
+
+    await query('ALTER TABLE properties ADD COLUMN IF NOT EXISTS property_category_id INT NULL');
+    await query('ALTER TABLE properties ADD COLUMN IF NOT EXISTS house_rules TEXT NULL');
+    await query(`UPDATE properties p
+      JOIN property_categories c ON c.slug = CASE
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space') THEN 'bedspace'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('private_room', 'solo_room', 'private') THEN 'room_for_rent'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('entire_unit', 'studio_unit', 'studio') THEN 'studio_unit'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'dormitory' THEN 'dormitory'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'boarding_house' THEN 'boarding_house'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'shared_apartment' THEN 'shared_apartment'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'condominium' THEN 'condominium'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'apartment' THEN 'apartment'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'townhouse' THEN 'townhouse'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'house' THEN 'house'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'duplex' THEN 'duplex'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'loft' THEN 'loft'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'penthouse' THEN 'penthouse'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'staff_house' THEN 'staff_house'
+        ELSE 'other'
+      END
+      SET p.property_category_id = c.id
+      WHERE p.property_category_id IS NULL`);
+    await query(`CREATE TABLE IF NOT EXISTS rental_spaces (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      property_id ${propertyIdType} NOT NULL,
+      name VARCHAR(160) NOT NULL,
+      space_type VARCHAR(100) NOT NULL,
+      description TEXT NULL,
+      rental_arrangement ENUM('exclusive', 'shared') NOT NULL DEFAULT 'exclusive',
+      max_occupants INT NOT NULL DEFAULT 1,
+      capacity_slots INT NOT NULL DEFAULT 1,
+      monthly_rent DECIMAL(10, 2) NOT NULL,
+      rent_basis ENUM('per_space', 'per_slot') NOT NULL DEFAULT 'per_space',
+      security_deposit DECIMAL(10, 2) NULL,
+      advance_payment_months TINYINT UNSIGNED NULL,
+      furnishing_status ENUM('furnished', 'partially_furnished', 'unfurnished', 'unspecified') NOT NULL DEFAULT 'unspecified',
+      gender_preference ENUM('co-ed', 'male', 'female') NULL,
+      amenities JSON NULL,
+      availability_status ENUM('available', 'partially_occupied', 'fully_occupied', 'reserved', 'unavailable', 'coming_soon') NOT NULL DEFAULT 'available',
+      is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      is_default TINYINT(1) NOT NULL DEFAULT 0,
+      available_from DATE NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+      INDEX idx_rental_spaces_property (property_id),
+      INDEX idx_rental_spaces_availability (availability_status),
+      INDEX idx_rental_spaces_arrangement (rental_arrangement)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await query(`CREATE TABLE IF NOT EXISTS rental_space_images (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      rental_space_id INT NOT NULL,
+      image_url VARCHAR(500) NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (rental_space_id) REFERENCES rental_spaces(id) ON DELETE CASCADE,
+      INDEX idx_rental_space_images_space (rental_space_id, sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await query(`INSERT INTO rental_spaces
+      (property_id, name, space_type, description, rental_arrangement, max_occupants, capacity_slots, monthly_rent, rent_basis, gender_preference, amenities, availability_status, is_default)
+      SELECT p.id, p.title, p.room_type, p.description,
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), 'shared', 'exclusive'),
+        GREATEST(1, COALESCE(p.max_occupants, 1)),
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), GREATEST(1, COALESCE(p.total_slots, 1)), 1),
+        p.monthly_rent,
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), 'per_slot', 'per_space'),
+        p.gender_preference, p.amenities,
+        IF(p.status = 'approved', 'available', 'unavailable'), 1
+      FROM properties p
+      LEFT JOIN rental_spaces rs ON rs.property_id = p.id AND rs.is_default = 1
+      WHERE rs.id IS NULL`);
+
+    const bookingTableExists = (await query("SHOW TABLES LIKE 'bookings'"))[0] !== undefined;
+    if (bookingTableExists) {
+      await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rental_space_id INT NULL AFTER property_id');
+      await query(`UPDATE bookings b
+        JOIN rental_spaces rs ON rs.property_id = b.property_id AND rs.is_default = 1
+        SET b.rental_space_id = rs.id
+        WHERE b.rental_space_id IS NULL`);
+    }
+    const categoryConstraint = await query(`SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'properties' AND CONSTRAINT_NAME = 'fk_properties_category'`);
+    if (!categoryConstraint.length) {
+      await query('ALTER TABLE properties ADD CONSTRAINT fk_properties_category FOREIGN KEY (property_category_id) REFERENCES property_categories(id)');
+    }
+    if (bookingTableExists) {
+      const bookingSpaceConstraint = await query(`SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings' AND CONSTRAINT_NAME = 'fk_bookings_rental_space'`);
+      if (!bookingSpaceConstraint.length) {
+        await query('ALTER TABLE bookings ADD CONSTRAINT fk_bookings_rental_space FOREIGN KEY (rental_space_id) REFERENCES rental_spaces(id) ON DELETE SET NULL');
+      }
+    }
+
     console.log('✨ Database setup complete! You can now:');
     console.log('   1. Run the backend: npm start');
     console.log('   2. Create a new property with an image');

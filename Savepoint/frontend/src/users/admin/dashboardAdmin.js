@@ -1,6 +1,6 @@
 import { ensureAdminSidebarStyles, loadAdminStylesheet, renderAdminDateMeta, renderAdminSidebar } from './sidebarAdmin.js';
 import { buildActivityFeed, buildDashboardMetrics } from './analytics.js';
-import { confirmDialog, createModal, openModal, successDialog } from '../../components/modal.js';
+import { createModal, openModal } from '../../components/modal.js';
 import { showToast } from '../../components/toast.js';
 import { applyAdminPrivacy } from './privacy.js';
 import { resolveUserAvatarUrl } from './avatar.js';
@@ -202,22 +202,8 @@ function showUserProfileModal(user) {
   openModal(modal);
 }
 
-async function archiveUser(root, user) {
-  const userLabel = user.name || user.email || 'this user';
-  const confirmed = await confirmDialog({
-    title: 'Archive account?',
-    message: `${userLabel} will no longer be able to access their account. You can restore it later from the Archive page.`,
-    confirmLabel: 'Archive account'
-  });
-  if (!confirmed) return;
-
-  try {
-    await apiRequest(`/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
-    await successDialog(`${userLabel} was archived.`);
-    await refreshDashboardData(root);
-  } catch (error) {
-    showToast({ message: error.message || 'Could not archive user.', type: 'error' });
-  }
+function archiveUser() {
+  showToast({ message: 'Archive functionality is not implemented yet.', type: 'info' });
 }
 
 function bindUserActions(root, users = []) {
@@ -231,7 +217,7 @@ function bindUserActions(root, users = []) {
 
     button.addEventListener('click', () => {
       if (action === 'profile') showUserProfileModal(user);
-      if (action === 'archive') archiveUser(root, user);
+      if (action === 'archive') archiveUser();
     });
   });
 }

@@ -2,7 +2,7 @@ import { ensureAdminSidebarStyles, loadAdminStylesheet, renderAdminDateMeta, ren
 import { applyAdminPrivacy } from './privacy.js';
 import { resolveUserAvatarUrl } from './avatar.js';
 import { showToast } from '../../components/toast.js';
-import { confirmDialog, createModal, openModal, successDialog, warningDialog } from '../../components/modal.js';
+import { createModal, openModal, successDialog, warningDialog } from '../../components/modal.js';
 
 const API = window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1';
 const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('dormhive.accessToken') ?? ''}` });
@@ -217,24 +217,7 @@ export async function renderUserManagement(root = document.querySelector('#app')
       body.querySelectorAll('.user-status-button').forEach((button) => button.addEventListener('click', async () => {
         if (button.disabled) return;
         if (button.dataset.archiveId) {
-          const confirmed = await confirmDialog({
-            title: 'Archive account?',
-            message: 'This account will no longer be able to sign in. You can restore it later from the Archive page.',
-            confirmLabel: 'Archive account'
-          });
-          if (!confirmed) return;
-          button.disabled = true;
-          try {
-            const response = await fetch(`${API}/users/${button.dataset.archiveId}`, { method: 'DELETE', headers: headers() });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.message || 'Unable to archive account.');
-            showToast({ message: 'Account archived successfully.', type: 'success' });
-            await load();
-          } catch (error) {
-            status.textContent = error.message;
-            status.hidden = false;
-            button.disabled = false;
-          }
+          showToast({ message: 'Archive functionality is not implemented yet.', type: 'info' });
           return;
         }
         button.disabled = true;

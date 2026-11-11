@@ -665,11 +665,16 @@ legend {
   min-width: 0;
   height: 420px;
   overflow: hidden;
+  cursor: pointer;
   border: 1px solid #e3eae7;
   border-radius: 10px;
   background: #fff;
   box-shadow: none;
   scroll-snap-align: start;
+}
+.listing:focus-visible {
+  outline: 3px solid #178764;
+  outline-offset: 3px;
 }
 .dh-dashboard .listing,
 .dh-dashboard .listing * {

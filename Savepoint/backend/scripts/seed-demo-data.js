@@ -1,10 +1,25 @@
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
+import { readFile } from 'node:fs/promises';
 import pool from '../core/config/database.js';
 
 const DEMO_DATABASE = 'dormhive_restore';
 const DEMO_PASSWORD = '12345678';
 const RECORD_COUNT = 50;
+const demoPhotoCategory = {
+  bedspace: 'bedspace',
+  bed_space: 'bedspace',
+  shared_room: 'bedspace',
+  private_room: 'solo',
+  solo_room: 'solo',
+  entire_unit: 'studio',
+  studio_unit: 'studio'
+};
+const demoPhotoFiles = {
+  bedspace: 'sample_bedspace.jpg',
+  solo: 'sample_condo.jpg',
+  studio: 'sample_house.jpg'
+};
 
 const locations = [
   { city: 'Manila', province: 'Metro Manila', barangay: 'Tondo', latitude: 14.6194, longitude: 120.9663 },
@@ -81,6 +96,42 @@ const tenants = Array.from({ length: RECORD_COUNT }, (_, index) => {
   };
 });
 
+async function updateDemoPhotos(connection, listings) {
+  const photoBuffers = new Map(
+    await Promise.all(Object.entries(demoPhotoFiles).map(async ([category, filename]) => [
+      category,
+      await readFile(new URL(`./demo-sample-images/${filename}`, import.meta.url))
+    ]))
+  );
+
+  for (const listing of listings) {
+    const category = demoPhotoCategory[String(listing.room_type).toLowerCase()];
+    if (!category) {
+      throw new Error(`Unsupported room type "${listing.room_type}" for demo listing ${listing.id}.`);
+    }
+
+    await connection.execute(
+      'DELETE FROM media_files WHERE property_id = ? AND LEFT(original_filename, 12) = ?',
+      [listing.id, 'demo_sample_']
+    );
+
+    const filename = `demo_sample_${category}.jpg`;
+    const buffer = photoBuffers.get(category);
+    const [result] = await connection.execute(
+      `INSERT INTO media_files
+        (uploaded_by, property_id, is_private, original_filename, mime_type, file_size, file_data)
+       VALUES (?, ?, 0, ?, 'image/jpeg', ?, ?)`,
+      [listing.owner_id, listing.id, filename, buffer.length, buffer]
+    );
+    const imageReference = `/api/v1/media/${result.insertId}`;
+
+    await connection.execute(
+      'UPDATE properties SET image_url = ?, images = ? WHERE id = ?',
+      [imageReference, JSON.stringify([imageReference]), listing.id]
+    );
+  }
+}
+
 async function seedDemoData() {
   if (process.env.DATABASE_NAME !== DEMO_DATABASE) {
     throw new Error(`Demo seeding is restricted to the ${DEMO_DATABASE} database.`);
@@ -132,6 +183,28 @@ async function seedDemoData() {
       }
       await connection.commit();
       console.log(`Updated map coordinates for ${updatedCount} demo listings. Coordinates mark approximate barangay/city centers.`);
+      return;
+    }
+
+    if (process.argv.includes('--update-demo-photos')) {
+      const listings = [];
+      for (const [index, owner] of owners.entries()) {
+        const [matches] = await connection.execute(
+          `SELECT p.id, p.owner_id, p.room_type FROM properties p
+           JOIN users u ON u.id = p.owner_id
+           WHERE u.email = ? AND p.title = ? AND p.status = 'approved'`,
+          [owner.email, `Demo rental ${String(index + 1).padStart(3, '0')} - ${locations[index].city}`]
+        );
+        if (matches.length !== 1) {
+          throw new Error(`Expected one approved demo listing for ${owner.email}; found ${matches.length}.`);
+        }
+        listings.push(matches[0]);
+      }
+
+      await connection.beginTransaction();
+      await updateDemoPhotos(connection, listings);
+      await connection.commit();
+      console.log(`Updated photos for ${listings.length} approved demo listings.`);
       return;
     }
 
@@ -195,6 +268,21 @@ async function seedDemoData() {
       `INSERT INTO properties (owner_id, title, description, address, municipality, barangay, room_type, monthly_rent, max_occupants, total_slots, available_slots, gender_preference, amenities, latitude, longitude, image_url, images, ownership_document_id, status) VALUES ${propertyPlaceholders}`,
       propertyValues
     );
+
+    const demoListings = [];
+    for (const [index, owner] of owners.entries()) {
+      const [matches] = await connection.execute(
+        `SELECT p.id, p.owner_id, p.room_type FROM properties p
+         JOIN users u ON u.id = p.owner_id
+         WHERE u.email = ? AND p.title = ? AND p.status = 'approved'`,
+        [owner.email, `Demo rental ${String(index + 1).padStart(3, '0')} - ${locations[index].city}`]
+      );
+      if (matches.length !== 1) {
+        throw new Error(`Expected one approved demo listing for ${owner.email}; found ${matches.length}.`);
+      }
+      demoListings.push(matches[0]);
+    }
+    await updateDemoPhotos(connection, demoListings);
 
     await connection.commit();
     console.log(`Created ${tenants.length} tenants, ${owners.length} owners, and ${owners.length} approved demo listings.`);

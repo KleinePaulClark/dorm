@@ -1874,7 +1874,7 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
       const isFavorite = favoriteIds.has(String(item.id));
 
       return `
-        <article class="listing" data-id="${item.id}">
+        <article class="listing" data-id="${item.id}" tabindex="0" aria-label="View details for ${esc(item.title || 'Available dorm space')}">
           <div class="photo p${index % 4}">
             <img src="${esc(galleryImages[0])}" alt="${esc(item.title || 'Listing photo')}" class="listing-photo" loading="lazy" decoding="async" />
             <em>${esc(item.status === 'approved' ? 'Verified' : (item.status || 'Approved'))}</em>
@@ -1889,9 +1889,6 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
             <p class="meta"><strong>Gender:</strong> ${esc(gender)}</p>
             <div class="amenity-summary">${amenitySummary}</div>
             <div class="price"><strong>${money(item.monthly_rent)}</strong><small>/ month</small><span>${icon('walk')}${walkDistance} km</span></div>
-            <div class="listing-actions">
-              <button type="button" class="action-btn view-details" data-id="${item.id}">View Details</button>
-            </div>
           </div>
         </article>
       `;
@@ -1921,21 +1918,19 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
       }));
     });
 
-    cards.querySelectorAll('.listing-photo').forEach((imageElement) => {
-      const openPhotoViewer = () => {
-        const property = state.all.find((item) => String(item.id) === String(imageElement.closest('.listing').dataset.id));
-        if (!property) return;
-        const clickedImage = imageElement.currentSrc || imageElement.src;
-        openTenantPhotoViewer(property, clickedImage);
+    cards.querySelectorAll('.listing').forEach((card) => {
+      const openDetails = () => {
+        const property = state.all.find((item) => String(item.id) === String(card.dataset.id));
+        if (property) openPropertyDetails(property);
       };
-      imageElement.addEventListener('click', openPhotoViewer);
-      imageElement.tabIndex = 0;
-      imageElement.setAttribute('role', 'button');
-      imageElement.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          openPhotoViewer();
-        }
+      card.addEventListener('click', (event) => {
+        if (event.target.closest('button, a, input, select, textarea')) return;
+        openDetails();
+      });
+      card.addEventListener('keydown', (event) => {
+        if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        openDetails();
       });
     });
 
@@ -1948,13 +1943,6 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
         button.innerHTML = heartIcon(isFavorite);
         button.setAttribute('aria-pressed', String(isFavorite));
         button.setAttribute('aria-label', isFavorite ? 'Remove from favorites' : 'Save listing');
-      });
-    });
-
-    cards.querySelectorAll('.view-details').forEach((button) => {
-      button.addEventListener('click', () => {
-        const property = state.all.find((item) => String(item.id) === String(button.dataset.id));
-        if (property) openPropertyDetails(property);
       });
     });
 

@@ -314,16 +314,53 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                     </div>
                     <div class="form-grid">
                       <label class="full-span">Property title<input name="title" required maxlength="160"></label>
-                      <label>Property type<select name="roomType" required>
+                      <label>Property category<select name="propertyCategory" required>
+                        <option value="">Select category</option>
+                        <option value="bedspace">Bedspace</option>
+                        <option value="dormitory">Dormitory</option>
+                        <option value="boarding_house">Boarding House</option>
+                        <option value="room_for_rent">Room for Rent</option>
+                        <option value="shared_apartment">Shared Apartment</option>
+                        <option value="studio_unit">Studio Unit</option>
+                        <option value="condominium">Condominium</option>
+                        <option value="apartment">Apartment</option>
+                        <option value="townhouse">Townhouse</option>
+                        <option value="house">House</option>
+                        <option value="duplex">Duplex</option>
+                        <option value="loft">Loft</option>
+                        <option value="penthouse">Penthouse</option>
+                        <option value="staff_house">Staff House</option>
+                        <option value="other">Other</option>
+                      </select></label>
+                      <label>Primary space type<select name="roomType" required>
                         <option value="">Select type</option>
                         <option value="bedspace">Bedspace</option>
                         <option value="private_room">Solo Room</option>
                         <option value="entire_unit">Studio Unit</option>
                         <option value="other">Other</option>
-                      </select><input name="customRoomType" type="text" maxlength="100" placeholder="Type your property type" aria-label="Custom property type" hidden></label>
+                      </select><input name="customRoomType" type="text" maxlength="100" placeholder="Type your space type" aria-label="Custom space type" hidden></label>
+                      <label>Rental arrangement<select name="rentalArrangement" required>
+                        <option value="">Select occupancy arrangement</option>
+                        <option value="exclusive">Exclusive — one tenant or household rents the whole space</option>
+                        <option value="shared">Shared — rent individual slots within this space</option>
+                      </select></label>
                       <label>Monthly price (₱)<input name="monthlyRent" type="text" inputmode="decimal" autocomplete="off" required></label>
-                      <label>Total rental slots<input name="totalSlots" type="number" min="1" value="1" required></label>
-                      <label>Gender preference<select name="genderPreference" required>
+                      <label>Rent charged<select name="rentBasis" required>
+                        <option value="">Select rent basis</option>
+                        <option value="per_space">For the whole space</option>
+                        <option value="per_slot">Per occupant or slot</option>
+                      </select></label>
+                      <label>Maximum occupants<input name="maxOccupants" type="number" min="1" value="1" required></label>
+                      <label>Maximum rentable slots<input name="totalSlots" type="number" min="1" value="1" required></label>
+                      <label>Security deposit (₱)<input name="securityDeposit" type="number" min="0" step="0.01"></label>
+                      <label>Advance payment (months)<input name="advancePaymentMonths" type="number" min="0" max="12" step="1"></label>
+                      <label>Furnishing<select name="furnishingStatus" required>
+                        <option value="unspecified">Not specified</option>
+                        <option value="furnished">Furnished</option>
+                        <option value="partially_furnished">Partially furnished</option>
+                        <option value="unfurnished">Unfurnished</option>
+                      </select></label>
+                      <label>Gender preference (for shared spaces)<select name="genderPreference">
                         <option value="">Select preference</option>
                         <option value="co-ed">Co-Ed</option>
                         <option value="male">Male Only</option>
@@ -360,7 +397,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                   <div id="property-form-step-3" class="property-form-step" hidden>
                     <div class="form-step-title">
                       <h3>Amenities &amp; Media</h3>
-                      <p>Add photos and describe your property</p>
+                      <p>Add property photos, describe the property, and provide house rules</p>
                     </div>
                     <div class="amenities-section">
                       <label class="section-label">Select available amenities</label>
@@ -395,7 +432,8 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                     </div>
                     <div class="media-file-list" aria-live="polite"></div>
                     <div class="form-grid">
-                      <label class="full-span">Description (optional)<textarea name="description" rows="4" placeholder="Describe your property, house rules, and what makes it special..."></textarea></label>
+                      <label class="full-span">Description (optional)<textarea name="description" rows="4" placeholder="Describe the property and what makes it special..."></textarea></label>
+                      <label class="full-span">House rules (optional)<textarea name="houseRules" rows="3" placeholder="Add rules that apply to everyone at this property..."></textarea></label>
                     </div>
                     <div class="modal-actions">
                       <button type="button" class="btn-secondary step-back" data-back-step="2">Back</button>
@@ -529,7 +567,19 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   const monthlyRentInput = propertyForm.elements.monthlyRent;
   const roomTypeSelect = propertyForm.elements.roomType;
   const customRoomTypeInput = propertyForm.elements.customRoomType;
+  const rentalArrangementSelect = propertyForm.elements.rentalArrangement;
+  const rentBasisSelect = propertyForm.elements.rentBasis;
+  const rentalSlotsInput = propertyForm.elements.totalSlots;
   const ownershipProofInput = propertyForm.elements.ownershipProof;
+  const syncRentalArrangement = () => {
+    const isShared = rentalArrangementSelect.value === 'shared';
+    rentalSlotsInput.disabled = !isShared;
+    rentalSlotsInput.required = isShared;
+    if (!isShared) rentalSlotsInput.value = '1';
+    if (rentalArrangementSelect.value === 'exclusive') rentBasisSelect.value = 'per_space';
+    if (rentalArrangementSelect.value === 'shared' && !rentBasisSelect.value) rentBasisSelect.value = 'per_slot';
+  };
+  rentalArrangementSelect.addEventListener('change', syncRentalArrangement);
   const isOwnershipProofRequired = () => {
     if (!propertyForm.dataset.editingPropertyId || propertyForm.dataset.hasOwnershipProof !== 'true') return true;
     return [
@@ -691,34 +741,54 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   const validateStep = (step) => {
     if (step === 1) {
       const title = propertyForm.elements.title.value.trim();
+      const propertyCategory = propertyForm.elements.propertyCategory.value;
       const roomType = propertyForm.elements.roomType.value;
+      const rentalArrangement = rentalArrangementSelect.value;
       const monthlyRent = Number(propertyForm.elements.monthlyRent.value.replace(/,/g, ''));
       const totalSlots = propertyForm.elements.totalSlots.value;
+      const maxOccupants = Number(propertyForm.elements.maxOccupants.value);
+      const rentBasis = rentBasisSelect.value;
       const genderPreference = propertyForm.elements.genderPreference.value;
       
       if (!title) {
         setFormMessage('Please enter a property title.');
         return false;
       }
+      if (!propertyCategory) {
+        setFormMessage('Please select a property category.');
+        return false;
+      }
       if (!roomType) {
-        setFormMessage('Please select a property type.');
+        setFormMessage('Please select the primary rentable space type.');
         return false;
       }
       if (roomType === 'other' && !customRoomTypeInput.value.trim()) {
-        setFormMessage('Please enter your property type.');
+        setFormMessage('Please enter your space type.');
         customRoomTypeInput.focus();
+        return false;
+      }
+      if (!['exclusive', 'shared'].includes(rentalArrangement)) {
+        setFormMessage('Please specify whether this space is rented exclusively or shared.');
         return false;
       }
       if (!Number.isFinite(monthlyRent) || monthlyRent < 1) {
         setFormMessage('Please enter a valid monthly price.');
         return false;
       }
-      if (!totalSlots || !Number.isInteger(Number(totalSlots)) || Number(totalSlots) < 1) {
+      if (rentalArrangement === 'shared' && (!totalSlots || !Number.isInteger(Number(totalSlots)) || Number(totalSlots) < 1)) {
         setFormMessage('Please enter a valid number of rental slots.');
         return false;
       }
-      if (!genderPreference) {
-        setFormMessage('Please select a gender preference.');
+      if (!Number.isInteger(maxOccupants) || maxOccupants < 1) {
+        setFormMessage('Please enter a valid maximum occupant count.');
+        return false;
+      }
+      if (!rentBasis || (rentalArrangement === 'exclusive' && rentBasis !== 'per_space')) {
+        setFormMessage('Choose how rent is charged. Exclusive spaces are charged per space.');
+        return false;
+      }
+      if (rentalArrangement === 'shared' && !genderPreference) {
+        setFormMessage('Please select a gender preference for this shared space.');
         return false;
       }
       return true;
@@ -764,18 +834,23 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     const roomType = roomTypeSelect.value === 'other'
       ? customRoomTypeInput.value.trim()
       : normalizePropertyTypeLabel(roomTypeSelect.value);
+    const propertyCategory = propertyForm.elements.propertyCategory.selectedOptions[0]?.textContent || 'Not specified';
     const amenities = Array.from(propertyForm.querySelectorAll('input[name="amenities"]:checked'))
       .map((checkbox) => formatAmenityLabel(checkbox.value));
     const photos = selectedPhotos.map((photo) => photo.previewUrl).filter(Boolean);
     const values = [
-      ['Property type', roomType],
-      ['Monthly price', `PHP ${propertyForm.elements.monthlyRent.value || '0'} / month`],
-      ['Total rental slots', propertyForm.elements.totalSlots.value],
+      ['Property category', propertyCategory],
+      ['Primary space type', roomType],
+      ['Rental arrangement', rentalArrangementSelect.selectedOptions[0]?.textContent || 'Not specified'],
+      ['Monthly price', `PHP ${propertyForm.elements.monthlyRent.value || '0'} ${rentBasisSelect.value === 'per_slot' ? 'per slot / month' : '/ month'}`],
+      ['Maximum occupants', propertyForm.elements.maxOccupants.value],
+      ['Maximum rentable slots', rentalArrangementSelect.value === 'shared' ? propertyForm.elements.totalSlots.value : '1 (exclusive space)'],
       ['Gender preference', propertyForm.elements.genderPreference.selectedOptions[0]?.textContent || 'Not specified'],
       ['Location', [propertyForm.elements.address.value, propertyForm.elements.barangay.value, propertyForm.elements.municipality.value].filter(Boolean).join(', ')],
       ['Ownership proof', ownershipProofInput.files[0]?.name || (propertyForm.dataset.hasOwnershipProof === 'true' ? 'Existing proof on file (private)' : 'Missing')],
       ['Amenities', amenities.join(', ') || 'None selected'],
-      ['Description', propertyForm.elements.description.value.trim() || 'No description provided']
+      ['Description', propertyForm.elements.description.value.trim() || 'No description provided'],
+      ['House rules', propertyForm.elements.houseRules.value.trim() || 'No additional rules']
     ];
 
     listingReviewSummary.innerHTML = `
@@ -789,6 +864,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   const closeModal = () => {
     propertyModal.hidden = true;
     propertyForm.reset();
+    syncRentalArrangement();
     propertyForm.elements.address.value = '';
     propertyForm.elements.municipality.value = '';
     propertyForm.elements.barangay.value = '';
@@ -1524,6 +1600,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     // Populate the form with existing property data
     const form = propertyForm;
     form.elements.title.value = propertyData.title || '';
+    form.elements.propertyCategory.value = propertyData.property_category || 'other';
     const savedRoomType = String(propertyData.room_type || propertyData.property_type || '').trim();
     const normalizedRoomType = normalizePropertyTypeValue(savedRoomType);
     const standardRoomTypes = ['bedspace', 'private_room', 'entire_unit'];
@@ -1539,7 +1616,14 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     }
     syncCustomRoomType();
     form.elements.monthlyRent.value = formatMonthlyRent(propertyData.monthly_rent || '');
-    form.elements.totalSlots.value = propertyData.total_slots || '1';
+    form.elements.rentalArrangement.value = propertyData.rental_arrangement || (normalizedRoomType === 'bedspace' ? 'shared' : 'exclusive');
+    form.elements.rentBasis.value = propertyData.rent_basis || (form.elements.rentalArrangement.value === 'shared' ? 'per_slot' : 'per_space');
+    form.elements.maxOccupants.value = propertyData.space_max_occupants || propertyData.max_occupants || '1';
+    form.elements.totalSlots.value = propertyData.space_capacity_slots || propertyData.total_slots || '1';
+    form.elements.securityDeposit.value = propertyData.security_deposit ?? '';
+    form.elements.advancePaymentMonths.value = propertyData.advance_payment_months ?? '';
+    form.elements.furnishingStatus.value = propertyData.furnishing_status || 'unspecified';
+    syncRentalArrangement();
     form.elements.genderPreference.value = propertyData.gender_preference || '';
     form.elements.address.value = propertyData.address || '';
     form.elements.municipality.value = propertyData.municipality || '';
@@ -1547,6 +1631,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     form.elements.latitude.value = propertyData.latitude || '';
     form.elements.longitude.value = propertyData.longitude || '';
     form.elements.description.value = propertyData.description || '';
+    form.elements.houseRules.value = propertyData.house_rules || '';
     form.dataset.hasOwnershipProof = String(propertyData.has_ownership_proof === true || Number(propertyData.has_ownership_proof) === 1);
     form.dataset.originalAddress = propertyData.address || '';
     form.dataset.originalMunicipality = propertyData.municipality || '';

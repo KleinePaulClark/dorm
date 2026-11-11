@@ -10,10 +10,12 @@ Run it from this directory with the database configured in `.env`:
 $env:DEMO_SEED_APPLY = 'true'
 npm run seed-demo-data
 npm run seed-demo-data -- -- --update-locations
+npm run seed-demo-data -- -- --update-demo-photos
 Remove-Item Env:DEMO_SEED_APPLY
 ```
 
 The `--update-locations` mode updates only the matching demo listings' approximate barangay/city-center coordinates and is safe to rerun. These are local demo fixtures only; they are marked active/approved and their listings intentionally have no ownership-proof documents.
+The seeder adds one illustrative sample image to every demo listing, matching its Bedspace, Solo Room, or Studio Unit type. These photos are reused across listings of the same type. For demo data that already exists, run the `--update-demo-photos` command above; it safely replaces only previously generated demo sample photos.
 
 ## Custom property types
 
