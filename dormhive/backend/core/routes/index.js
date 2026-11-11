@@ -1,0 +1,24 @@
+import { Router } from 'express';
+import analyticsRoutes from './analyticsRoutes.js';
+import authRoutes from './authRoutes.js';
+import bookingRoutes from './bookingRoutes.js';
+import messageRoutes from './messageRoutes.js';
+import mediaRoutes from './mediaRoutes.js';
+import notificationRoutes from './notificationRoutes.js';
+import propertyRoutes from './propertyRoutes.js';
+import realtimeRoutes from './realtimeRoutes.js';
+import supportTicketRoutes from './supportTicketRoutes.js';
+import userRoutes from './userRoutes.js';
+
+const router = Router();
+router.use('/analytics', analyticsRoutes);
+router.use('/auth', authRoutes);
+router.use('/bookings', bookingRoutes);
+router.use('/messages', messageRoutes);
+router.use('/media', mediaRoutes);
+router.use('/notifications', notificationRoutes);
+router.use('/properties', propertyRoutes);
+router.use('/events', realtimeRoutes);
+router.use('/support-tickets', supportTicketRoutes);
+router.use('/users', userRoutes);
+export default router;

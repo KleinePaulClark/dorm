@@ -1,0 +1,445 @@
+const API_BASE_URL = (window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1').replace(/\/$/, '');
+import { showToast } from '../components/toast.js';
+import { openLegalModal } from './legal.js';
+import { navigate } from '../../router.js';
+import { getApiErrorMessage, readApiResponse } from '../services/api.js';
+
+function loadStylesheet() {
+  const existing = document.querySelector('link[data-dormhive-auth="split"]');
+  if (existing) return existing.sheet ? Promise.resolve() : new Promise((resolve) => existing.addEventListener('load', resolve, { once: true }));
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = new URL('./style/split-auth.css', import.meta.url).href;
+  link.dataset.dormhiveAuth = 'split';
+  document.head.append(link);
+  if (!document.querySelector('link[data-dormhive-auth="boxicons"]')) {
+    const icons = document.createElement('link');
+    icons.rel = 'stylesheet';
+    icons.href = "https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css";
+    icons.dataset.dormhiveAuth = 'boxicons';
+    document.head.append(icons);
+  }
+  return new Promise((resolve) => {
+    link.addEventListener('load', resolve, { once: true });
+    link.addEventListener('error', resolve, { once: true });
+  });
+}
+
+function redirectForRole(role, email) {
+  const destinations = { tenant: '/tenant/dashboardTenant', owner: '/owner/dashboardOwner', admin: '/admin/dashboardAdmin' };
+  const pendingEmail = localStorage.getItem('dormhive.owner.onboardingEmail');
+  const showOwnerOnboarding = role === 'owner' && pendingEmail && pendingEmail.toLowerCase() === String(email ?? '').toLowerCase();
+  if (showOwnerOnboarding) localStorage.removeItem('dormhive.owner.onboardingEmail');
+  window.location.assign('#' + (showOwnerOnboarding ? '/owner/dashboardOwner?welcome=owner' : destinations[role] ?? '/'));
+}
+
+function showMessage(element, message) {
+  element.textContent = message;
+  element.className = 'auth-message auth-message--error';
+  element.hidden = false;
+}
+
+function loginErrorMessage(response, body) {
+  if (response.status === 429) return 'Too many requests. Please wait a few minutes and try again.';
+  if (!body && response.status >= 500) return 'The sign-in service is temporarily unavailable. Please try again.';
+  if (!body) return `Unable to sign in (request failed with status ${response.status}).`;
+  return getApiErrorMessage(body, 'Unable to sign in.');
+}
+
+export async function renderLogin(root = document.querySelector('#app')) {
+  if (!root) throw new Error('Login page requires an element with id "app".');
+  await loadStylesheet();
+  root.innerHTML = `
+    <div class="container">
+      <a class="auth-brand" href="../index.html"><span class="auth-brand-mark" aria-hidden="true"><svg class="auth-brand-icon" viewBox="0 0 180 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="img"><defs><linearGradient id="auth-brand-navy" x1="20" y1="10" x2="160" y2="170" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#203E69"/><stop offset="0.55" stop-color="#102B4F"/><stop offset="1" stop-color="#071B35"/></linearGradient><linearGradient id="auth-brand-gold" x1="70" y1="30" x2="120" y2="145" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE08A"/><stop offset="0.35" stop-color="#F5BE42"/><stop offset="1" stop-color="#C98213"/></linearGradient><filter id="auth-brand-shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="12" stdDeviation="10" flood-opacity="0.20"/></filter><filter id="auth-brand-glow"><feGaussianBlur stdDeviation="2.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M90 8 C126 8 157 36 162 71 C167 106 148 139 119 157 C108 164 98 169 90 172 C82 169 72 164 61 157 C32 139 13 106 18 71 C23 36 54 8 90 8Z" fill="url(#auth-brand-navy)" filter="url(#auth-brand-shadow)"/><path d="M90 20 C120 20 146 43 150 72 C154 101 139 128 114 144 C105 150 97 154 90 157 C83 154 75 150 66 144 C41 128 26 101 30 72 C34 43 60 20 90 20Z" fill="none" stroke="url(#auth-brand-gold)" stroke-width="2" opacity=".75"/><path d="M90 31 L105 40 L105 57 L90 66 L75 57 L75 40Z" fill="none" stroke="url(#auth-brand-gold)" stroke-width="3" opacity=".9"/><path d="M55 55 L70 64 L70 81 L55 90 L40 81 L40 64Z" fill="none" stroke="url(#auth-brand-gold)" stroke-width="3" opacity=".55"/><path d="M125 55 L140 64 L140 81 L125 90 L110 81 L110 64Z" fill="none" stroke="url(#auth-brand-gold)" stroke-width="3" opacity=".55"/><path d="M59 54 L59 122 C59 133 67 139 78 139 L91 139 C119 139 137 121 137 96 C137 71 119 54 91 54 Z M78 71 L91 71 C108 71 119 81 119 96 C119 111 108 122 91 122 L78 122 Z" fill="white" fill-rule="evenodd"/><path d="M69 88 L89 69 L109 88" fill="none" stroke="url(#auth-brand-gold)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#auth-brand-glow)"/><path d="M82 119 L82 99 C82 94 85 91 90 91 C95 91 98 94 98 99 L98 119" fill="url(#auth-brand-gold)"/><circle cx="94" cy="105" r="2" fill="#102B4F"/><circle cx="90" cy="42" r="3" fill="#FFE08A"/><circle cx="48" cy="72" r="2.5" fill="#F5BE42" opacity=".8"/><circle cx="132" cy="72" r="2.5" fill="#F5BE42" opacity=".8"/><path d="M68 148 C75 152 83 155 90 158 C97 155 105 152 112 148" fill="none" stroke="url(#auth-brand-gold)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="auth-brand-name"><span>Dorm</span><span class="auth-brand-name-accent">Hive</span></span></a>
+        <div class="auth-corner-brand" aria-hidden="true"><span>DORMHIVE</span><i></i></div>
+      <div class="form-box login">
+        <form aria-labelledby="login-title" autocomplete="off">
+          <div class="form-inner">
+            <div class="auth-form-brand" aria-label="DormHive"><span class="auth-form-brand-mark" aria-hidden="true"><svg class="auth-form-brand-icon" viewBox="0 0 180 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="img"><defs><linearGradient id="auth-form-navy" x1="20" y1="10" x2="160" y2="170" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#203E69"/><stop offset="0.55" stop-color="#102B4F"/><stop offset="1" stop-color="#071B35"/></linearGradient><linearGradient id="auth-form-gold" x1="70" y1="30" x2="120" y2="145" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE08A"/><stop offset="0.35" stop-color="#F5BE42"/><stop offset="1" stop-color="#C98213"/></linearGradient><filter id="auth-form-shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="12" stdDeviation="10" flood-opacity="0.20"/></filter><filter id="auth-form-glow"><feGaussianBlur stdDeviation="2.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M90 8 C126 8 157 36 162 71 C167 106 148 139 119 157 C108 164 98 169 90 172 C82 169 72 164 61 157 C32 139 13 106 18 71 C23 36 54 8 90 8Z" fill="url(#auth-form-navy)" filter="url(#auth-form-shadow)"/><path d="M90 20 C120 20 146 43 150 72 C154 101 139 128 114 144 C105 150 97 154 90 157 C83 154 75 150 66 144 C41 128 26 101 30 72 C34 43 60 20 90 20Z" fill="none" stroke="url(#auth-form-gold)" stroke-width="2" opacity=".75"/><path d="M90 31 L105 40 L105 57 L90 66 L75 57 L75 40Z" fill="none" stroke="url(#auth-form-gold)" stroke-width="3" opacity=".9"/><path d="M55 55 L70 64 L70 81 L55 90 L40 81 L40 64Z" fill="none" stroke="url(#auth-form-gold)" stroke-width="3" opacity=".55"/><path d="M125 55 L140 64 L140 81 L125 90 L110 81 L110 64Z" fill="none" stroke="url(#auth-form-gold)" stroke-width="3" opacity=".55"/><path d="M59 54 L59 122 C59 133 67 139 78 139 L91 139 C119 139 137 121 137 96 C137 71 119 54 91 54 Z M78 71 L91 71 C108 71 119 81 119 96 C119 111 108 122 91 122 L78 122 Z" fill="white" fill-rule="evenodd"/><path d="M69 88 L89 69 L109 88" fill="none" stroke="url(#auth-form-gold)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#auth-form-glow)"/><path d="M82 119 L82 99 C82 94 85 91 90 91 C95 91 98 94 98 99 L98 119" fill="url(#auth-form-gold)"/><circle cx="94" cy="105" r="2" fill="#102B4F"/><circle cx="90" cy="42" r="3" fill="#FFE08A"/><circle cx="48" cy="72" r="2.5" fill="#F5BE42" opacity=".8"/><circle cx="132" cy="72" r="2.5" fill="#F5BE42" opacity=".8"/><path d="M68 148 C75 152 83 155 90 158 C97 155 105 152 112 148" fill="none" stroke="url(#auth-form-gold)" stroke-width="3" stroke-linecap="round"/></svg></span><span>Dorm<span class="auth-form-brand-accent">Hive</span></span></div>
+            <h1 id="login-title">Login</h1>
+            <p>Sign in to continue</p>
+            <p class="auth-message" role="alert" hidden></p>
+            <div class="input-box"><input id="email" name="email" type="email" placeholder="Email" autocomplete="off" required></div>
+            <div class="input-box"><input id="password" name="password" type="password" placeholder="Password" autocomplete="new-password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
+            <div class="forgot-link"><a href="#/forgot-password">Forgot Password?</a></div>
+            <button class="btn auth-submit" type="submit">Login</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="form-box register">
+        <form aria-labelledby="register-title">
+          <div class="form-inner">
+            <div class="auth-form-brand" aria-label="DormHive"><span class="auth-form-brand-mark" aria-hidden="true"><svg class="auth-form-brand-icon" viewBox="0 0 180 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="img"><defs><linearGradient id="login-register-form-navy" x1="20" y1="10" x2="160" y2="170" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#203E69"/><stop offset="0.55" stop-color="#102B4F"/><stop offset="1" stop-color="#071B35"/></linearGradient><linearGradient id="login-register-form-gold" x1="70" y1="30" x2="120" y2="145" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFE08A"/><stop offset="0.35" stop-color="#F5BE42"/><stop offset="1" stop-color="#C98213"/></linearGradient><filter id="login-register-form-shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="12" stdDeviation="10" flood-opacity="0.20"/></filter><filter id="login-register-form-glow"><feGaussianBlur stdDeviation="2.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M90 8 C126 8 157 36 162 71 C167 106 148 139 119 157 C108 164 98 169 90 172 C82 169 72 164 61 157 C32 139 13 106 18 71 C23 36 54 8 90 8Z" fill="url(#login-register-form-navy)" filter="url(#login-register-form-shadow)"/><path d="M90 20 C120 20 146 43 150 72 C154 101 139 128 114 144 C105 150 97 154 90 157 C83 154 75 150 66 144 C41 128 26 101 30 72 C34 43 60 20 90 20Z" fill="none" stroke="url(#login-register-form-gold)" stroke-width="2" opacity=".75"/><path d="M90 31 L105 40 L105 57 L90 66 L75 57 L75 40Z" fill="none" stroke="url(#login-register-form-gold)" stroke-width="3" opacity=".9"/><path d="M55 55 L70 64 L70 81 L55 90 L40 81 L40 64Z" fill="none" stroke="url(#login-register-form-gold)" stroke-width="3" opacity=".55"/><path d="M125 55 L140 64 L140 81 L125 90 L110 81 L110 64Z" fill="none" stroke="url(#login-register-form-gold)" stroke-width="3" opacity=".55"/><path d="M59 54 L59 122 C59 133 67 139 78 139 L91 139 C119 139 137 121 137 96 C137 71 119 54 91 54 Z M78 71 L91 71 C108 71 119 81 119 96 C119 111 108 122 91 122 L78 122 Z" fill="white" fill-rule="evenodd"/><path d="M69 88 L89 69 L109 88" fill="none" stroke="url(#login-register-form-gold)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#login-register-form-glow)"/><path d="M82 119 L82 99 C82 94 85 91 90 91 C95 91 98 94 98 99 L98 119" fill="url(#login-register-form-gold)"/><circle cx="94" cy="105" r="2" fill="#102B4F"/><circle cx="90" cy="42" r="3" fill="#FFE08A"/><circle cx="48" cy="72" r="2.5" fill="#F5BE42" opacity=".8"/><circle cx="132" cy="72" r="2.5" fill="#F5BE42" opacity=".8"/><path d="M68 148 C75 152 83 155 90 158 C97 155 105 152 112 148" fill="none" stroke="url(#login-register-form-gold)" stroke-width="3" stroke-linecap="round"/></svg></span><span>Dorm<span class="auth-form-brand-accent">Hive</span></span></div>
+            <h1 id="register-title">Registration</h1>
+            <p>Create your account</p>
+            <p class="auth-message" role="alert" hidden></p>
+            <div class="register-name-row">
+              <div class="input-box"><input id="first_name" name="first_name" type="text" placeholder="First name" required maxlength="120"></div>
+              <div class="input-box"><input id="last_name" name="last_name" type="text" placeholder="Last name" required maxlength="120"></div>
+            </div>
+            <div class="input-box"><input id="email_r" name="email" type="email" placeholder="Email address" required></div>
+            <div class="input-box phone-field">
+              <div class="phone-input-box" aria-label="Philippines phone number">
+                <span class="phone-country" aria-label="Philippines, country code +63">
+                  <span class="phone-flag" aria-hidden="true"></span>
+                  <span class="phone-prefix">+63</span>
+                </span>
+                <input id="phone_r" name="phone" type="tel" inputmode="numeric" placeholder="9XX XXX XXXX" required maxlength="12" autocomplete="tel">
+              </div>
+            </div>
+            <input id="role" name="role" type="hidden" value="tenant">
+            <fieldset class="role-choice-group">
+              <legend>I want to</legend>
+              <label class="role-choice"><input type="checkbox" data-role-choice="tenant" checked><span>Find a rental</span></label>
+              <label class="role-choice"><input type="checkbox" data-role-choice="owner"><span>List a property</span></label>
+            </fieldset>
+            <div class="input-box"><input id="password_r" name="password" type="password" placeholder="Password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
+            <div class="input-box"><input id="confirm_password" name="confirmPassword" type="password" placeholder="Confirm password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
+            <div class="identity-upload">
+              <label for="identity-document">Upload a valid ID <span aria-hidden="true">*</span></label>
+              <input id="identity-document" name="identityDocument" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" required>
+              <small>Government-issued or another valid ID, up to 5 MB. Only admins can view it for account verification.</small>
+            </div>
+            <label class="checkbox-label"><input name="terms" type="checkbox" required> I agree to the <a href="#/terms">Terms and conditions</a>.</label>
+            <button class="btn auth-submit" type="submit">Submit for review</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="toggle-box">
+        <div class="toggle-panel toggle-left">
+          <h1><span>Welcome to</span><span>Dormhive</span></h1>
+          <p>Your next chapter starts here.<br>Sign in to access your account and<br>manage your stay with ease.</p>
+          <button class="btn register-btn">Register</button>
+          <div class="welcome-footer" aria-label="DormHive values">
+            <span class="welcome-footer-line" aria-hidden="true"></span>
+            <span class="welcome-footer-values">SAFE <b aria-hidden="true">•</b> SIMPLE <b aria-hidden="true">•</b> SMART</span>
+          </div>
+        </div>
+        <div class="toggle-panel toggle-right">
+          <span class="welcome-divider-line" aria-hidden="true"></span>
+          <h1><span>Join Our</span><span>Community!</span></h1>
+          <p>Create your account and be part<br>of a safe, simple, and convenient<br>way to manage your dorm life.</p>
+          <button class="btn login-btn">Login</button>
+          <div class="welcome-footer" aria-label="DormHive values">
+            <span class="welcome-footer-line" aria-hidden="true"></span>
+            <span class="welcome-footer-values">SAFE <b aria-hidden="true">•</b> SIMPLE <b aria-hidden="true">•</b> SMART</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const container = root.querySelector('.container');
+  const registerBtn = root.querySelector('.register-btn');
+  const loginBtn = root.querySelector('.login-btn');
+  const form = root.querySelector('.form-box.login form');
+  const registerForm = root.querySelector('.form-box.register form');
+  const loginMessage = root.querySelector('.form-box.login .auth-message');
+  const registerMessage = root.querySelector('.form-box.register .auth-message');
+  const loginSubmitButton = root.querySelector('.form-box.login .auth-submit');
+  const registerSubmitButton = root.querySelector('.form-box.register .auth-submit');
+  const phoneInput = root.querySelector('#phone_r');
+  const identityDocumentInput = root.querySelector('#identity-document');
+  const roleInput = root.querySelector('#role');
+  root.querySelectorAll('[data-role-choice]').forEach((choice) => {
+    choice.addEventListener('change', () => {
+      if (!choice.checked) {
+        choice.checked = true;
+        return;
+      }
+      root.querySelectorAll('[data-role-choice]').forEach((otherChoice) => {
+        if (otherChoice !== choice) otherChoice.checked = false;
+      });
+      roleInput.value = choice.dataset.roleChoice;
+    });
+  });
+  const authBrand = root.querySelector('.auth-brand');
+  const brandName = authBrand?.querySelector('.auth-brand-name');
+  const cornerBrand = root.querySelector('.auth-corner-brand');
+  const toggleBox = root.querySelector('.toggle-box');
+  let brandAnimationTimer;
+  let mobilePanelTimer;
+  let mobilePendingMode;
+  const applyMobilePanelMode = (registering) => {
+    const incomingPanel = container.querySelector(
+      registering ? '.toggle-panel.toggle-right' : '.toggle-panel.toggle-left',
+    );
+    if (!incomingPanel) throw new Error('Mobile auth panel is missing.');
+    incomingPanel.classList.add('mobile-arriving');
+    container.classList.toggle('active', registering);
+  };
+
+  container.addEventListener('animationend', (event) => {
+    if (
+      event.target instanceof HTMLElement
+      && event.target.classList.contains('mobile-arriving')
+      && event.animationName === 'mobile-auth-welcome-enter-down'
+    ) {
+      event.target.classList.remove('mobile-arriving');
+      return;
+    }
+    if (event.target !== container || event.pseudoElement !== '::before') return;
+    if (!event.animationName.startsWith('mobile-auth-wipe-')) return;
+    window.clearTimeout(mobilePanelTimer);
+    mobilePanelTimer = undefined;
+    if (mobilePendingMode !== undefined) {
+      applyMobilePanelMode(mobilePendingMode);
+      mobilePendingMode = undefined;
+    }
+    container.querySelector('.toggle-panel.mobile-exiting')?.classList.remove('mobile-exiting');
+    container.classList.remove('mobile-switching');
+    container.style.removeProperty('--mobile-wipe-height');
+    container.style.removeProperty('--mobile-wipe-cover-height');
+    container.style.removeProperty('--mobile-wipe-start-color');
+    container.style.removeProperty('--mobile-wipe-end-color');
+    container.style.removeProperty('--mobile-wipe-return-duration');
+    animateAuthBrand();
+  });
+
+  const revealCornerBrand = () => {
+    if (!cornerBrand) return;
+    cornerBrand.classList.remove('auth-corner-brand--transitioning', 'auth-corner-brand--revealing');
+    if (container.classList.contains('active')) return;
+    void cornerBrand.offsetWidth;
+    cornerBrand.classList.add('auth-corner-brand--revealing');
+  };
+
+  const animateAuthBrand = () => {
+    if (!authBrand) return;
+    authBrand.classList.remove('auth-brand--animate', 'auth-brand--transitioning');
+    void authBrand.offsetWidth;
+    authBrand.classList.add('auth-brand--animate');
+    authBrand.classList.remove('auth-brand--mobile-hidden');
+  };
+
+  if (authBrand && brandName && toggleBox) {
+    const animationOrder = 'eviHmroD';
+    const letters = Array.from(brandName.children).flatMap((segment) =>
+      Array.from(segment.textContent, (character) => {
+        const letter = document.createElement('span');
+        letter.className = 'auth-brand-name-letter';
+        if (segment.classList.contains('auth-brand-name-accent')) {
+          letter.classList.add('auth-brand-name-accent');
+        }
+        letter.style.setProperty('--letter-order', animationOrder.indexOf(character));
+        letter.textContent = character;
+        return letter;
+      }),
+    );
+    brandName.replaceChildren(...letters);
+
+    toggleBox.addEventListener('transitionend', (event) => {
+      if (event.pseudoElement !== '::before' || event.propertyName !== 'left') return;
+      window.clearTimeout(brandAnimationTimer);
+      authBrand.classList.remove('auth-brand--animate');
+      void authBrand.offsetWidth;
+      authBrand.classList.add('auth-brand--animate');
+      authBrand.classList.remove('auth-brand--transitioning');
+      revealCornerBrand();
+    });
+  }
+
+  const setPanelMode = (registering) => {
+    if (container.classList.contains('mobile-switching')) return;
+    if (container.classList.contains('active') === registering) return;
+    const isMobile = window.matchMedia('(max-width: 800px)').matches;
+    if (isMobile) {
+      authBrand?.classList.remove('auth-brand--animate', 'auth-brand--transitioning');
+      cornerBrand?.classList.remove('auth-corner-brand--revealing', 'auth-corner-brand--transitioning');
+      const activePanel = container.querySelector(
+        container.classList.contains('active') ? '.toggle-panel.toggle-right' : '.toggle-panel.toggle-left',
+      );
+      if (!activePanel) throw new Error('Mobile auth panel is missing.');
+      const currentMode = container.classList.contains('active');
+      const currentLayoutHeight = container.scrollHeight;
+      const primaryColor = getComputedStyle(container).getPropertyValue('--dormhive-primary').trim();
+      const primaryDarkColor = getComputedStyle(container).getPropertyValue('--dormhive-primary-dark').trim();
+      container.style.setProperty('--mobile-wipe-start-color', currentMode ? primaryDarkColor : primaryColor);
+      container.style.setProperty('--mobile-wipe-end-color', registering ? primaryDarkColor : primaryColor);
+      container.classList.toggle('active', registering);
+      const destinationHeight = container.scrollHeight;
+      container.classList.toggle('active', currentMode);
+      const coverHeight = Math.max(currentLayoutHeight, destinationHeight, window.innerHeight) + 144;
+      authBrand?.classList.add('auth-brand--mobile-hidden');
+      activePanel.classList.add('mobile-exiting');
+      container.style.setProperty('--mobile-wipe-height', `${activePanel.getBoundingClientRect().height}px`);
+      container.style.setProperty('--mobile-wipe-cover-height', `${coverHeight}px`);
+      container.classList.add('mobile-switching');
+      mobilePendingMode = registering;
+      const wipeDuration = getComputedStyle(container, '::before').animationDuration
+        .split(',')[0]
+        .trim();
+      const wipeDurationMs = parseFloat(wipeDuration) * (wipeDuration.endsWith('ms') ? 1 : 1000);
+      container.style.setProperty('--mobile-wipe-return-duration', `${wipeDurationMs * 0.18}ms`);
+      mobilePanelTimer = window.setTimeout(
+        () => {
+          applyMobilePanelMode(mobilePendingMode);
+          mobilePendingMode = undefined;
+          mobilePanelTimer = undefined;
+        },
+        wipeDurationMs * 0.82,
+      );
+    } else {
+      authBrand?.classList.remove('auth-brand--animate');
+      authBrand?.classList.add('auth-brand--transitioning');
+      cornerBrand?.classList.remove('auth-corner-brand--revealing');
+      cornerBrand?.classList.add('auth-corner-brand--transitioning');
+      container.classList.remove('mobile-switching');
+      container.classList.toggle('active', registering);
+    }
+    if (isMobile || !authBrand || !toggleBox) return;
+
+    const transitionDuration = getComputedStyle(toggleBox, '::before').transitionDuration
+      .split(',')
+      .map((value) => parseFloat(value) * (value.trim().endsWith('ms') ? 1 : 1000))
+      .reduce((longest, duration) => Math.max(longest, duration), 0);
+    window.clearTimeout(brandAnimationTimer);
+    brandAnimationTimer = window.setTimeout(() => {
+      authBrand.classList.remove('auth-brand--animate');
+      void authBrand.offsetWidth;
+      authBrand.classList.add('auth-brand--animate');
+      authBrand.classList.remove('auth-brand--transitioning');
+      revealCornerBrand();
+    }, transitionDuration + 50);
+  };
+
+  root.querySelectorAll('.checkbox-label a[href="#/terms"], .checkbox-label a[href="#/privacy"]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openLegalModal(link.getAttribute('href') === '#/terms' ? 'terms' : 'privacy');
+    });
+  });
+
+  root.querySelectorAll('.password-toggle').forEach((toggle) => {
+    toggle.addEventListener('click', () => {
+      const passwordInput = toggle.parentElement.querySelector('input');
+      const isVisible = passwordInput.type === 'text';
+      passwordInput.type = isVisible ? 'password' : 'text';
+      toggle.setAttribute('aria-label', isVisible ? 'Show password' : 'Hide password');
+      toggle.setAttribute('aria-pressed', String(!isVisible));
+      toggle.querySelector('i').className = isVisible ? 'bx bx-show' : 'bx bx-hide';
+    });
+  });
+
+  const getPhoneDigits = (value = '') => String(value).replace(/\D/g, '').slice(0, 10);
+  const formatPhoneValue = (value = '') => {
+    const digits = getPhoneDigits(value);
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+  };
+  const normalizePhoneValue = formatPhoneValue;
+  const toServerPhoneValue = (value = '') => {
+    const digits = getPhoneDigits(value);
+    return digits ? `+63${digits}` : '';
+  };
+  const isValidPhoneValue = (value = '') => /^9\d{9}$/.test(getPhoneDigits(value));
+
+  const validatePhoneField = (showError = true) => {
+    const digits = getPhoneDigits(phoneInput.value);
+    const formatted = formatPhoneValue(digits);
+    if (phoneInput.value !== formatted) phoneInput.value = formatted;
+    const valid = isValidPhoneValue(digits);
+    phoneInput.setCustomValidity(valid ? '' : 'Phone number must be exactly 10 digits.');
+    if (showError && !valid) {
+      showMessage(registerMessage, 'Phone number must be exactly 10 digits.');
+    } else if (showError && registerMessage && !registerMessage.hidden && registerMessage.textContent === 'Phone number must be exactly 10 digits.') {
+      registerMessage.hidden = true;
+      registerMessage.textContent = '';
+    }
+    return valid;
+  };
+
+  registerBtn.addEventListener('click', () => setPanelMode(true));
+  loginBtn.addEventListener('click', () => setPanelMode(false));
+
+  if (phoneInput) {
+    phoneInput.addEventListener('input', () => {
+      const cursor = phoneInput.selectionStart ?? phoneInput.value.length;
+      const digitsBeforeCursor = getPhoneDigits(phoneInput.value.slice(0, cursor)).length;
+      const digits = getPhoneDigits(phoneInput.value);
+      phoneInput.value = normalizePhoneValue(phoneInput.value);
+      let nextCursor = 0;
+      let digitsSeen = 0;
+      while (nextCursor < phoneInput.value.length && digitsSeen < digitsBeforeCursor) {
+        if (/\d/.test(phoneInput.value[nextCursor])) digitsSeen += 1;
+        nextCursor += 1;
+      }
+      if ((digitsBeforeCursor === 3 || digitsBeforeCursor === 6) && digits.length > digitsBeforeCursor) {
+        nextCursor += 1;
+      }
+      phoneInput.setSelectionRange(nextCursor, nextCursor);
+      validatePhoneField(false);
+    });
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    loginSubmitButton.disabled = true;
+    loginSubmitButton.textContent = 'Signing in…';
+    if (loginMessage) loginMessage.hidden = true;
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+      const body = await readApiResponse(response);
+      if (!response.ok) throw new Error(loginErrorMessage(response, body));
+      localStorage.setItem('dormhive.accessToken', body.accessToken);
+      localStorage.setItem('dormhive.user', JSON.stringify(body.user));
+      redirectForRole(body.user.role, body.user.email);
+    } catch (error) {
+      showMessage(loginMessage, error instanceof TypeError ? 'Unable to reach the sign-in service. Please check that the backend is running.' : error.message);
+      loginSubmitButton.disabled = false;
+      loginSubmitButton.textContent = 'Login';
+    }
+  });
+
+  if (registerForm) {
+    registerForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const formData = Object.fromEntries(new FormData(registerForm));
+      const password = String(formData.password ?? '');
+      const confirmPassword = String(formData.confirmPassword ?? '');
+
+      if (password !== confirmPassword) {
+        showMessage(registerMessage, 'Passwords do not match.');
+        return;
+      }
+
+      if (!registerForm.reportValidity()) return;
+      if (!validatePhoneField(true)) {
+        phoneInput.focus();
+        return;
+      }
+      const identityDocument = identityDocumentInput.files[0];
+      if (!identityDocument || identityDocument.size > 5 * 1024 * 1024) {
+        showMessage(registerMessage, 'Choose an ID file that is no larger than 5 MB.');
+        identityDocumentInput.focus();
+        return;
+      }
+
+      const { terms, confirmPassword: _confirmPassword, ...payload } = formData;
+      payload.phone = toServerPhoneValue(payload.phone);
+      const requestData = new FormData();
+      Object.entries(payload).forEach(([key, value]) => requestData.append(key, value));
+      registerSubmitButton.disabled = true;
+      registerSubmitButton.textContent = 'Submitting…';
+      if (registerMessage) registerMessage.hidden = true;
+      try {
+        const response = await fetch(`${API_BASE_URL}/auth/register`, { method: 'POST', body: requestData });
+        const body = await readApiResponse(response);
+        if (!response.ok) throw new Error(getApiErrorMessage(body, 'Unable to create your account.'));
+        showToast({ message: 'Application submitted. Check your email after admin review.', type: 'success' });
+        navigate('/login', true);
+      } catch (error) {
+        showMessage(registerMessage, error.message);
+        registerSubmitButton.disabled = false;
+        registerSubmitButton.textContent = 'Submit for review';
+      }
+    });
+  }
+}

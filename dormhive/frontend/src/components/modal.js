@@ -1,0 +1,156 @@
+﻿let stylesheetPromise;
+function style() {
+	if (stylesheetPromise) return stylesheetPromise;
+	let link = document.querySelector('[data-component-style="modal"]');
+	const href = new URL('./style/modal.css', import.meta.url);
+	href.searchParams.set('v', 'centered-confirm-4');
+	if (!link) {
+		link = document.createElement('link');
+		link.rel = 'stylesheet';
+		link.dataset.componentStyle = 'modal';
+	}
+	if (link.href !== href.href) link.href = href.href;
+	stylesheetPromise = new Promise(resolve => {
+		if (link.sheet) {
+			resolve();
+			return;
+		}
+		link.addEventListener('load', resolve, { once: true });
+		link.addEventListener('error', resolve, { once: true });
+		if (!link.isConnected) document.head.append(link);
+	});
+	return stylesheetPromise;
+}
+
+export function createModal({ title = '', content = '', closeLabel = 'Close', footerMarkup = '', closeOnBackdrop = true } = {}) {
+	style();
+	document.querySelectorAll('.ui-modal').forEach((existing) => existing.remove());
+	const dialog = document.createElement('dialog');
+	dialog.className = 'ui-modal';
+	dialog.innerHTML = `<div class="ui-modal__header"><h2>${title}</h2><button type="button" aria-label="Close dialog" data-modal-close>×</button></div><div class="ui-modal__body"></div><div class="ui-modal__footer">${footerMarkup}<button type="button" data-modal-close>${closeLabel}</button></div>`;
+	const body = dialog.querySelector('.ui-modal__body');
+	typeof content === 'string' ? body.innerHTML = content : body.append(content);
+	let closing = false;
+	const remove = () => {
+		window.removeEventListener('hashchange', close);
+		dialog.remove();
+	};
+	const close = () => {
+		if (closing) return;
+		closing = true;
+		if (dialog.open) dialog.close();
+		remove();
+	};
+	dialog.querySelectorAll('[data-modal-close]').forEach((button) => button.addEventListener('click', close));
+	if (closeOnBackdrop) {
+		dialog.addEventListener('click', (event) => {
+			if (event.target === dialog) close();
+		});
+	}
+	dialog.addEventListener('close', remove, { once: true });
+	window.addEventListener('hashchange', close);
+	document.body.append(dialog);
+	return dialog;
+}
+
+export function openModal(modal) {
+	return style().then(() => {
+		if (modal.isConnected && !modal.open) modal.showModal();
+		return modal;
+	});
+}
+
+export async function confirmDialog({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', iconName = 'archive', variant = 'danger' }) {
+	const content = document.createElement('div');
+	content.className = 'ui-confirm-dialog__content';
+	const icon = document.createElement('span');
+	icon.className = 'ui-confirm-dialog__icon';
+	icon.setAttribute('aria-hidden', 'true');
+	const iconClasses = { archive: 'bi-archive', approve: 'bi-check-lg', reject: 'bi-x-lg' };
+	icon.innerHTML = `<i class="bi ${iconClasses[iconName] ?? iconClasses.archive}"></i>`;
+	const description = document.createElement('p');
+	description.textContent = message;
+	content.append(icon, description);
+
+	const confirmButton = document.createElement('button');
+	confirmButton.type = 'button';
+	confirmButton.className = 'ui-confirm-dialog__confirm';
+	confirmButton.textContent = confirmLabel;
+	const modal = createModal({
+		title: escapeHtml(title),
+		content,
+		closeLabel: escapeHtml(cancelLabel),
+		footerMarkup: confirmButton.outerHTML
+	});
+	modal.classList.add('ui-confirm-dialog', `ui-confirm-dialog--${variant}`);
+
+	const result = new Promise((resolve) => {
+		modal.addEventListener('close', () => resolve(modal.returnValue === 'confirm'), { once: true });
+		modal.querySelector('.ui-confirm-dialog__confirm').addEventListener('click', () => modal.close('confirm'));
+	});
+	await openModal(modal);
+	modal.querySelector('[data-modal-close]:not([aria-label])')?.focus();
+	return result;
+}
+
+export async function successDialog(message, title = 'Success!') {
+	const content = document.createElement('div');
+	content.className = 'ui-success-dialog__content';
+	const icon = document.createElement('span');
+	icon.className = 'ui-success-dialog__icon';
+	icon.setAttribute('aria-hidden', 'true');
+	icon.textContent = '✓';
+	const description = document.createElement('p');
+	description.textContent = message;
+	content.append(icon, description);
+
+	const modal = createModal({ title: escapeHtml(title), content, closeLabel: 'OK', closeOnBackdrop: false });
+	modal.classList.add('ui-success-dialog');
+	const closed = new Promise((resolve) => {
+		const finish = () => {
+			window.removeEventListener('hashchange', finish);
+			resolve();
+		};
+		modal.addEventListener('close', finish, { once: true });
+		modal.addEventListener('cancel', finish, { once: true });
+		modal.querySelector('.ui-modal__footer [data-modal-close]')?.addEventListener('click', finish, { once: true });
+		window.addEventListener('hashchange', finish, { once: true });
+	});
+	await openModal(modal);
+	modal.querySelector('.ui-modal__footer [data-modal-close]')?.focus();
+	await closed;
+}
+
+export async function warningDialog(title, message) {
+	const content = document.createElement('div');
+	content.className = 'ui-warning-dialog__content';
+	const icon = document.createElement('span');
+	icon.className = 'ui-warning-dialog__icon';
+	icon.setAttribute('aria-hidden', 'true');
+	icon.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i>';
+	const description = document.createElement('p');
+	description.textContent = message;
+	content.append(icon, description);
+
+	const modal = createModal({ title: escapeHtml(title), content, closeLabel: 'OK', closeOnBackdrop: false });
+	modal.classList.add('ui-warning-dialog');
+	const closed = new Promise((resolve) => {
+		const finish = () => {
+			window.removeEventListener('hashchange', finish);
+			resolve();
+		};
+		modal.addEventListener('close', finish, { once: true });
+		modal.addEventListener('cancel', finish, { once: true });
+		modal.querySelector('.ui-modal__footer [data-modal-close]')?.addEventListener('click', finish, { once: true });
+		window.addEventListener('hashchange', finish, { once: true });
+	});
+	await openModal(modal);
+	modal.querySelector('.ui-modal__footer [data-modal-close]')?.focus();
+	await closed;
+}
+
+function escapeHtml(value) {
+	const element = document.createElement('span');
+	element.textContent = value;
+	return element.innerHTML;
+}
