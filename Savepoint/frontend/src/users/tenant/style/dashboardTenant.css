@@ -663,7 +663,7 @@ legend {
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  height: 420px;
+  height: auto;
   overflow: hidden;
   cursor: pointer;
   border: 1px solid #e3eae7;
@@ -988,7 +988,7 @@ legend {
     width: 100%;
     min-width: 0;
     height: auto;
-    min-height: 350px;
+    min-height: 0;
     flex-basis: auto;
   }
 }
@@ -1259,7 +1259,7 @@ legend {
   .dh-dashboard .listing {
     width: 100%;
     min-width: 0;
-    height: 280px;
+    height: auto;
     min-height: 0;
     border-color: #e1ebe7;
     border-radius: 12px;

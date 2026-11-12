@@ -172,7 +172,7 @@ function loadStyle() {
   const stylePromises = [];
 
   const dashboardStylesheet = new URL('./style/dashboardTenant.css', import.meta.url);
-  dashboardStylesheet.searchParams.set('v', 'tenant-listings-lazy-scroll-1');
+  dashboardStylesheet.searchParams.set('v', 'tenant-listings-content-height-1');
   stylePromises.push(loadTenantStylesheet('dashboard', dashboardStylesheet));
 
   if (!document.querySelector('[data-tenant-style="notifications"]')) {
@@ -797,7 +797,6 @@ function listingCard(item, index) {
         <div class="price"><strong>${money(item.monthly_rent)}</strong><small>/ month</small><span>${icon('walk')}${walkDistance} km</span></div>
         <div class="listing-actions">
           <button class="focus" data-id="${item.id}">View map</button>
-          <button type="button" class="action-btn view-details" data-id="${item.id}">View Details</button>
           <a href="#/tenant/message?propertyId=${encodeURIComponent(item.id)}" class="action-btn secondary" target="_blank" rel="noopener noreferrer">Chat</a>
         </div>
       </div>
@@ -1878,7 +1877,6 @@ export async function renderDashboardTenant(root = document.querySelector('#app'
           <div class="photo p${index % 4}">
             <img src="${esc(galleryImages[0])}" alt="${esc(item.title || 'Listing photo')}" class="listing-photo" loading="lazy" decoding="async" />
             <em>${esc(item.status === 'approved' ? 'Verified' : (item.status || 'Approved'))}</em>
-            <button type="button" class="favorite-toggle${isFavorite ? ' is-favorited' : ''}" data-property-id="${item.id}" aria-label="${isFavorite ? 'Remove from favorites' : 'Save listing'}" aria-pressed="${isFavorite}">${heartIcon(isFavorite)}</button>
             <button type="button" class="favorite-toggle${isFavorite ? ' is-favorited' : ''}" data-property-id="${item.id}" aria-label="${isFavorite ? 'Remove from favorites' : 'Save listing'}" aria-pressed="${isFavorite}">${heartIcon(isFavorite)}</button>
             ${dots}
           </div>
