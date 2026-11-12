@@ -1,0 +1,609 @@
+import 'dotenv/config';
+import mysql from 'mysql2/promise';
+
+const {
+  DATABASE_HOST = 'localhost',
+  DATABASE_PORT = 3306,
+  DATABASE_USER = 'root',
+  DATABASE_PASSWORD = '',
+  DATABASE_NAME = 'dormhive'
+} = process.env;
+
+const pool = mysql.createPool({
+  host: DATABASE_HOST,
+  port: DATABASE_PORT,
+  user: DATABASE_USER,
+  password: DATABASE_PASSWORD,
+  database: DATABASE_NAME,
+  waitForConnections: true,
+  connectionLimit: 1
+});
+
+async function query(sql, values = []) {
+  const connection = await pool.getConnection();
+  try {
+    const [rows] = await connection.execute(sql, values);
+    return rows;
+  } finally {
+    connection.release();
+  }
+}
+
+async function checkAndFixDatabase() {
+  console.log('🔧 DormHive Database Setup Tool\n');
+  
+  try {
+    console.log(`📡 Connecting to database: ${DATABASE_NAME} @ ${DATABASE_HOST}:${DATABASE_PORT}...`);
+    
+    // Check if properties table exists
+    const tables = await query("SHOW TABLES LIKE 'properties'");
+    
+    if (tables.length === 0) {
+      console.log('\n❌ Properties table does not exist. Creating database schema...\n');
+      
+      const migrations = [
+        // Users table
+        `CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          first_name VARCHAR(100),
+          last_name VARCHAR(100),
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          phone VARCHAR(20),
+          avatar_url VARCHAR(255),
+          role ENUM('tenant', 'owner', 'admin') DEFAULT 'tenant',
+          status ENUM('active', 'suspended', 'pending', 'archived') DEFAULT 'active',
+          verification_status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'approved',
+          verification_document_id INT NULL,
+          archived_status ENUM('active', 'suspended', 'pending') NULL,
+          archived_at DATETIME NULL,
+          last_login_at DATETIME NULL,
+          last_active_at DATETIME NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        
+        // Properties table
+        `CREATE TABLE IF NOT EXISTS properties (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          owner_id INT NOT NULL,
+          title VARCHAR(160) NOT NULL,
+          description TEXT,
+          address VARCHAR(255) NOT NULL,
+          municipality VARCHAR(100) NOT NULL,
+          barangay VARCHAR(100),
+          latitude DECIMAL(10, 8),
+          longitude DECIMAL(11, 8),
+          room_type VARCHAR(100) NOT NULL,
+          monthly_rent DECIMAL(10, 2) NOT NULL,
+          max_occupants INT NULL,
+          total_slots INT NOT NULL DEFAULT 1,
+          available_slots INT,
+          gender_preference ENUM('co-ed', 'male', 'female'),
+          amenities JSON,
+          image_url VARCHAR(255),
+          images JSON,
+          ownership_document_id INT NULL,
+          status ENUM('pending', 'approved', 'rejected', 'archived') DEFAULT 'pending',
+          archived_status ENUM('pending', 'approved', 'rejected') NULL,
+          archived_at DATETIME NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+          INDEX idx_status (status),
+          INDEX idx_owner (owner_id),
+          INDEX idx_municipality (municipality),
+          INDEX idx_room_type (room_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        
+        // Bookings table
+        `CREATE TABLE IF NOT EXISTS bookings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          property_id INT NOT NULL,
+          tenant_id INT NOT NULL,
+          owner_id INT NOT NULL,
+          move_in_date DATE,
+          move_out_date DATE,
+          is_indefinite_move_out TINYINT(1) NOT NULL DEFAULT 0,
+          viewing_date DATE NULL,
+          viewing_time TIME NULL,
+          viewing_schedule_tenant_submitted TINYINT(1) NOT NULL DEFAULT 0,
+          occupants INT NOT NULL DEFAULT 1,
+          message TEXT,
+          status ENUM('pending', 'approved', 'rejected', 'cancelled') DEFAULT 'pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+          FOREIGN KEY (tenant_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+          INDEX idx_status (status),
+          INDEX idx_property (property_id),
+          INDEX idx_tenant (tenant_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        
+        // Conversations table
+        `CREATE TABLE IF NOT EXISTS conversations (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          tenant_id INT NOT NULL,
+          owner_id INT NOT NULL,
+          property_id INT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (tenant_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+          INDEX idx_tenant (tenant_id),
+          INDEX idx_owner (owner_id),
+          INDEX idx_property (property_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        
+        // Messages table
+        `CREATE TABLE IF NOT EXISTS messages (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          conversation_id INT NOT NULL,
+          sender_id INT NOT NULL,
+          body TEXT NOT NULL,
+          read_at TIMESTAMP NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+          FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+          INDEX idx_conversation (conversation_id),
+          INDEX idx_sender (sender_id),
+          INDEX idx_read (read_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        
+        // Notifications table
+        `CREATE TABLE IF NOT EXISTS notifications (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          message TEXT,
+          read_at TIMESTAMP NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          INDEX idx_read (read_at),
+          INDEX idx_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+        
+        // Support tickets table
+        `CREATE TABLE IF NOT EXISTS support_tickets (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NOT NULL,
+          assigned_admin_id INT NULL,
+          subject VARCHAR(255) NOT NULL,
+          description TEXT,
+          status ENUM('open', 'in-progress', 'resolved', 'closed') DEFAULT 'open',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          INDEX idx_status (status),
+          INDEX idx_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+      ];
+      
+      for (const sql of migrations) {
+        await query(sql);
+        console.log('✓ Table created');
+      }
+      
+      console.log('\n✅ Database schema created successfully!\n');
+    } else {
+      console.log('✓ Properties table exists\n');
+      
+      // Check for missing users columns
+      const userColumns = await query('DESCRIBE users');
+      const userColumnNames = userColumns.map(col => col.Field);
+      if (!userColumnNames.includes('first_name')) {
+        console.log('⚠️  Users table missing first_name column. Adding it...\n');
+        await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100)");
+        console.log('✓ first_name column added to users table');
+      }
+      if (!userColumnNames.includes('last_name')) {
+        console.log('⚠️  Users table missing last_name column. Adding it...\n');
+        await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)");
+        console.log('✓ last_name column added to users table');
+      }
+      if (!userColumnNames.includes('phone')) {
+        console.log('⚠️  Users table missing phone column. Adding it...\n');
+        await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20)");
+        console.log('✓ phone column added to users table');
+      }
+      if (!userColumnNames.includes('avatar_url')) {
+        console.log('⚠️  Users table missing avatar_url column. Adding it...\n');
+        await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(255)");
+        console.log('✓ avatar_url column added to users table');
+      }
+      await query("ALTER TABLE users MODIFY COLUMN status ENUM('active', 'suspended', 'pending', 'archived') DEFAULT 'active'");
+      await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'approved'");
+      await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_document_id INT NULL");
+      await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_status ENUM('active', 'suspended', 'pending') NULL");
+      await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_at DATETIME NULL");
+      await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at DATETIME NULL");
+      await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at DATETIME NULL");
+      await query("UPDATE users SET last_active_at = last_login_at WHERE last_login_at IS NOT NULL AND last_active_at IS NULL");
+      
+      // Check for missing columns
+      const columns = await query('DESCRIBE properties');
+      const columnNames = columns.map(col => col.Field);
+      
+      const requiredColumns = {
+        'available_slots': 'INT',
+        'gender_preference': "ENUM('co-ed', 'male', 'female')",
+        'amenities': 'JSON',
+        'images': 'JSON'
+      };
+      
+      const missingColumns = Object.keys(requiredColumns).filter(col => !columnNames.includes(col));
+
+      if (!columnNames.includes('total_slots')) {
+        await query('ALTER TABLE properties ADD COLUMN total_slots INT NULL AFTER max_occupants');
+        await query('UPDATE properties SET total_slots = GREATEST(1, COALESCE(max_occupants, 1)) WHERE total_slots IS NULL');
+        await query('ALTER TABLE properties MODIFY COLUMN total_slots INT NOT NULL DEFAULT 1');
+        console.log('✓ total_slots column added and backfilled from existing capacity');
+      }
+      await query('ALTER TABLE properties MODIFY COLUMN max_occupants INT NULL');
+      
+      if (missingColumns.length > 0) {
+        console.log(`⚠️  Found ${missingColumns.length} missing column(s). Adding them...\n`);
+        
+        const alterStatements = [
+          "ALTER TABLE properties ADD COLUMN IF NOT EXISTS total_slots INT NOT NULL DEFAULT 1 AFTER max_occupants",
+          "ALTER TABLE properties ADD COLUMN IF NOT EXISTS available_slots INT AFTER max_occupants",
+          "ALTER TABLE properties ADD COLUMN IF NOT EXISTS gender_preference ENUM('co-ed', 'male', 'female') AFTER available_slots",
+          "ALTER TABLE properties ADD COLUMN IF NOT EXISTS amenities JSON AFTER gender_preference",
+          "ALTER TABLE properties ADD COLUMN IF NOT EXISTS images JSON AFTER image_url"
+        ];
+        
+        for (const sql of alterStatements) {
+          await query(sql);
+          console.log(`✓ ${sql.split('ADD COLUMN')[1].trim().split(' ')[0]} column added`);
+        }
+        
+        console.log('\n✅ Missing columns added successfully!\n');
+      } else {
+        console.log('✓ All required columns exist\n');
+      }
+      await query("ALTER TABLE properties MODIFY COLUMN status ENUM('pending', 'approved', 'rejected', 'archived') DEFAULT 'pending'");
+      await query('ALTER TABLE properties MODIFY COLUMN room_type VARCHAR(100) NOT NULL');
+      await query("ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived_status ENUM('pending', 'approved', 'rejected') NULL");
+      await query("ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived_at DATETIME NULL");
+      await query('ALTER TABLE properties ADD COLUMN IF NOT EXISTS ownership_document_id INT NULL');
+
+      const bookingTableExists = (await query("SHOW TABLES LIKE 'bookings'"))[0] !== undefined;
+      if (bookingTableExists) {
+        const bookingColumns = await query('DESCRIBE bookings');
+        const bookingColumnNames = bookingColumns.map((column) => column.Field);
+        if (!bookingColumnNames.includes('viewing_date')) {
+          await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS viewing_date DATE NULL AFTER move_out_date');
+          console.log('✓ viewing_date column added to bookings table');
+        }
+        if (!bookingColumnNames.includes('viewing_time')) {
+          await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS viewing_time TIME NULL AFTER viewing_date');
+          console.log('✓ viewing_time column added to bookings table');
+        }
+        if (!bookingColumnNames.includes('viewing_schedule_tenant_submitted')) {
+          await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS viewing_schedule_tenant_submitted TINYINT(1) NOT NULL DEFAULT 0 AFTER viewing_time');
+          console.log('✓ viewing_schedule_tenant_submitted column added to bookings table');
+        }
+        if (!bookingColumnNames.includes('occupants')) {
+          await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS occupants INT NOT NULL DEFAULT 1 AFTER viewing_schedule_tenant_submitted');
+          console.log('✓ occupants column added to bookings table');
+        }
+        if (!bookingColumnNames.includes('is_indefinite_move_out')) {
+          await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS is_indefinite_move_out TINYINT(1) NOT NULL DEFAULT 0 AFTER move_out_date');
+          console.log('✓ is_indefinite_move_out column added to bookings table');
+        }
+      }
+
+      const conversationTableExists = (await query("SHOW TABLES LIKE 'conversations'"))[0] !== undefined;
+      if (!conversationTableExists) {
+        console.log('⚠️  Conversations table missing. Creating conversations table...\n');
+        await query(`CREATE TABLE IF NOT EXISTS conversations (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          tenant_id INT NOT NULL,
+          owner_id INT NOT NULL,
+          property_id INT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (tenant_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+          INDEX idx_tenant (tenant_id),
+          INDEX idx_owner (owner_id),
+          INDEX idx_property (property_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+        console.log('✓ Conversations table created\n');
+      }
+
+      const messageColumns = await query('DESCRIBE messages');
+      const messageColumnNames = messageColumns.map(col => col.Field);
+      const missingMessageColumns = [];
+      if (!messageColumnNames.includes('conversation_id')) missingMessageColumns.push('conversation_id');
+      if (!messageColumnNames.includes('body')) missingMessageColumns.push('body');
+
+      if (missingMessageColumns.length > 0) {
+        console.log(`⚠️  Found ${missingMessageColumns.length} missing messages column(s). Adding them...\n`);
+        if (!messageColumnNames.includes('conversation_id')) {
+          await query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS conversation_id INT AFTER id');
+          await query('ALTER TABLE messages ADD FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE');
+          await query('CREATE INDEX IF NOT EXISTS idx_conversation ON messages (conversation_id)');
+          console.log('✓ conversation_id column added');
+        }
+        if (!messageColumnNames.includes('body')) {
+          await query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS body TEXT AFTER sender_id');
+          console.log('✓ body column added');
+        }
+        console.log('\n✅ Missing messages columns added successfully!\n');
+      }
+
+      if (!messageColumnNames.includes('photo_batch_id')) {
+        await query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS photo_batch_id CHAR(36) NULL AFTER body');
+        console.log('✓ photo_batch_id column added to messages table');
+      }
+
+      const notificationTableExists = (await query("SHOW TABLES LIKE 'notifications'"))[0] !== undefined;
+      if (notificationTableExists) {
+        const notificationColumns = await query('DESCRIBE notifications');
+        if (!notificationColumns.some((column) => column.Field === 'message')) {
+          await query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS message TEXT AFTER title');
+          console.log('✓ message column added to notifications table');
+        }
+      }
+
+    }
+
+    await query(`CREATE TABLE IF NOT EXISTS support_ticket_messages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ticket_id INT NOT NULL,
+      sender_id INT NOT NULL,
+      body TEXT NOT NULL,
+      attachment_url VARCHAR(500) NULL,
+      attachment_name VARCHAR(255) NULL,
+      is_internal TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_ticket_messages_ticket (ticket_id),
+      INDEX idx_ticket_messages_sender (sender_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await query('ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS assigned_admin_id INT NULL AFTER user_id');
+    const ticketMessageColumns = await query('SHOW COLUMNS FROM support_ticket_messages');
+    const ticketMessageColumnNames = ticketMessageColumns.map((column) => column.Field);
+    if (!ticketMessageColumnNames.includes('attachment_url')) {
+      await query('ALTER TABLE support_ticket_messages ADD COLUMN attachment_url VARCHAR(500) NULL');
+    }
+    if (!ticketMessageColumnNames.includes('attachment_name')) {
+      await query('ALTER TABLE support_ticket_messages ADD COLUMN attachment_name VARCHAR(255) NULL');
+    }
+
+    const parentIdType = async (tableName) => {
+      const columns = await query(`SHOW COLUMNS FROM \`${tableName}\``);
+      const idColumn = columns.find((column) => column.Field === 'id');
+      const columnType = String(idColumn?.Type ?? '').toLowerCase();
+      if (!/^(tinyint|smallint|mediumint|int|bigint)(\(\d+\))?( unsigned)?$/.test(columnType)) {
+        throw new Error(`Unsupported ${tableName}.id type for media foreign key: ${columnType || 'missing'}`);
+      }
+      return columnType.replace(/\(\d+\)/, '');
+    };
+    const userIdType = await parentIdType('users');
+    const propertyIdType = await parentIdType('properties');
+    const messageIdType = await parentIdType('messages');
+    const ticketMessageIdType = await parentIdType('support_ticket_messages');
+
+    await query(`CREATE TABLE IF NOT EXISTS media_files (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      uploaded_by ${userIdType} NOT NULL,
+      user_id ${userIdType} NULL,
+      property_id ${propertyIdType} NULL,
+      message_id ${messageIdType} NULL,
+      ticket_message_id ${ticketMessageIdType} NULL,
+      is_private TINYINT(1) NOT NULL DEFAULT 0,
+      original_filename VARCHAR(255) NOT NULL,
+      mime_type VARCHAR(127) NOT NULL,
+      file_size INT UNSIGNED NOT NULL,
+      file_data LONGBLOB NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+      FOREIGN KEY (ticket_message_id) REFERENCES support_ticket_messages(id) ON DELETE CASCADE,
+      INDEX idx_media_uploaded_by (uploaded_by),
+      INDEX idx_media_user (user_id),
+      INDEX idx_media_property (property_id),
+      INDEX idx_media_message (message_id),
+      INDEX idx_media_ticket_message (ticket_message_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await query('ALTER TABLE media_files ADD COLUMN IF NOT EXISTS is_private TINYINT(1) NOT NULL DEFAULT 0');
+
+    await query(`CREATE TABLE IF NOT EXISTS property_categories (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      slug VARCHAR(80) NOT NULL UNIQUE,
+      name VARCHAR(120) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    const categories = [
+      ['bedspace', 'Bedspace'],
+      ['dormitory', 'Dormitory'],
+      ['boarding_house', 'Boarding House'],
+      ['room_for_rent', 'Room for Rent'],
+      ['shared_apartment', 'Shared Apartment'],
+      ['studio_unit', 'Studio Unit'],
+      ['condominium', 'Condominium'],
+      ['apartment', 'Apartment'],
+      ['townhouse', 'Townhouse'],
+      ['house', 'House'],
+      ['duplex', 'Duplex'],
+      ['loft', 'Loft'],
+      ['penthouse', 'Penthouse'],
+      ['staff_house', 'Staff House'],
+      ['other', 'Other']
+    ];
+    for (const [slug, name] of categories) {
+      await query('INSERT INTO property_categories (slug, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)', [slug, name]);
+    }
+
+    await query('ALTER TABLE properties ADD COLUMN IF NOT EXISTS property_category_id INT NULL');
+    await query('ALTER TABLE properties ADD COLUMN IF NOT EXISTS house_rules TEXT NULL');
+    await query(`UPDATE properties p
+      JOIN property_categories c ON c.slug = CASE
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space') THEN 'bedspace'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('private_room', 'solo_room', 'private') THEN 'room_for_rent'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('entire_unit', 'studio_unit', 'studio') THEN 'studio_unit'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'dormitory' THEN 'dormitory'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'boarding_house' THEN 'boarding_house'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'shared_apartment' THEN 'shared_apartment'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'condominium' THEN 'condominium'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'apartment' THEN 'apartment'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'townhouse' THEN 'townhouse'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'house' THEN 'house'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'duplex' THEN 'duplex'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'loft' THEN 'loft'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'penthouse' THEN 'penthouse'
+        WHEN LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) = 'staff_house' THEN 'staff_house'
+        ELSE 'other'
+      END
+      SET p.property_category_id = c.id
+      WHERE p.property_category_id IS NULL`);
+    await query(`CREATE TABLE IF NOT EXISTS rental_spaces (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      property_id ${propertyIdType} NOT NULL,
+      name VARCHAR(160) NOT NULL,
+      category VARCHAR(100) NULL,
+      occupancy_type ENUM('exclusive', 'shared') NOT NULL DEFAULT 'exclusive',
+      space_type VARCHAR(100) NOT NULL,
+      description TEXT NULL,
+      rental_arrangement ENUM('exclusive', 'shared') NOT NULL DEFAULT 'exclusive',
+      max_occupants INT NOT NULL DEFAULT 1,
+      capacity_slots INT NOT NULL DEFAULT 1,
+      total_slots INT NOT NULL DEFAULT 1,
+      monthly_rent DECIMAL(10, 2) NOT NULL,
+      rent_basis ENUM('per_space', 'per_slot') NOT NULL DEFAULT 'per_space',
+      security_deposit DECIMAL(10, 2) NULL,
+      advance_payment_months TINYINT UNSIGNED NULL,
+      furnishing_status ENUM('furnished', 'partially_furnished', 'unfurnished', 'unspecified') NOT NULL DEFAULT 'unspecified',
+      gender_preference ENUM('co-ed', 'male', 'female') NULL,
+      amenities JSON NULL,
+      availability_status ENUM('available', 'partially_occupied', 'fully_occupied', 'reserved', 'unavailable', 'coming_soon') NOT NULL DEFAULT 'available',
+      is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      is_default TINYINT(1) NOT NULL DEFAULT 0,
+      available_from DATE NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+      INDEX idx_rental_spaces_property (property_id),
+      INDEX idx_rental_spaces_availability (availability_status),
+      INDEX idx_rental_spaces_arrangement (rental_arrangement)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS category VARCHAR(100) NULL AFTER name');
+    await query("ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS occupancy_type ENUM('exclusive', 'shared') NOT NULL DEFAULT 'exclusive'");
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS space_type VARCHAR(100) NULL AFTER name');
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS description TEXT NULL AFTER space_type');
+    await query("ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS rental_arrangement ENUM('exclusive', 'shared') NOT NULL DEFAULT 'exclusive'");
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS capacity_slots INT NOT NULL DEFAULT 1');
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS total_slots INT NOT NULL DEFAULT 1');
+    await query("ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS rent_basis ENUM('per_space', 'per_slot') NOT NULL DEFAULT 'per_space'");
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS security_deposit DECIMAL(10, 2) NULL');
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS advance_payment_months TINYINT UNSIGNED NULL');
+    await query("ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS furnishing_status ENUM('furnished', 'partially_furnished', 'unfurnished', 'unspecified') NOT NULL DEFAULT 'unspecified'");
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS amenities JSON NULL');
+    await query("ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS gender_preference ENUM('co-ed', 'male', 'female') NULL");
+    await query("ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS availability_status ENUM('available', 'partially_occupied', 'fully_occupied', 'reserved', 'unavailable', 'coming_soon') NOT NULL DEFAULT 'available'");
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS is_enabled TINYINT(1) NOT NULL DEFAULT 1');
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS is_default TINYINT(1) NOT NULL DEFAULT 0');
+    await query('ALTER TABLE rental_spaces ADD COLUMN IF NOT EXISTS available_from DATE NULL');
+    await query('ALTER TABLE rental_spaces MODIFY COLUMN category VARCHAR(100) NULL');
+    await query("ALTER TABLE rental_spaces MODIFY COLUMN availability_status ENUM('available', 'partially_occupied', 'fully_occupied', 'reserved', 'unavailable', 'coming_soon', 'occupied', 'maintenance') NOT NULL DEFAULT 'available'");
+    await query(`UPDATE rental_spaces SET
+      space_type = COALESCE(NULLIF(space_type, ''), NULLIF(category, ''), 'Rental space'),
+      rental_arrangement = COALESCE(occupancy_type, rental_arrangement, 'exclusive'),
+      capacity_slots = IF(
+        COALESCE(occupancy_type, rental_arrangement) = 'exclusive',
+        1,
+        GREATEST(1, COALESCE(total_slots, capacity_slots, 1))
+      ),
+      rent_basis = IF(COALESCE(occupancy_type, rental_arrangement) = 'shared', 'per_slot', 'per_space'),
+      availability_status = CASE availability_status
+        WHEN 'occupied' THEN 'fully_occupied'
+        WHEN 'maintenance' THEN 'unavailable'
+        ELSE availability_status
+      END`);
+    await query('UPDATE rental_spaces SET category = space_type, occupancy_type = rental_arrangement, total_slots = capacity_slots');
+    await query('ALTER TABLE rental_spaces MODIFY COLUMN space_type VARCHAR(100) NOT NULL');
+    await query("ALTER TABLE rental_spaces MODIFY COLUMN availability_status ENUM('available', 'partially_occupied', 'fully_occupied', 'reserved', 'unavailable', 'coming_soon') NOT NULL DEFAULT 'available'");
+    await query(`CREATE TABLE IF NOT EXISTS rental_space_images (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      rental_space_id INT NOT NULL,
+      image_url VARCHAR(500) NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (rental_space_id) REFERENCES rental_spaces(id) ON DELETE CASCADE,
+      INDEX idx_rental_space_images_space (rental_space_id, sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    const [unmarkedSpaces] = await pool.query(`SELECT property_id, MIN(id) AS id
+      FROM rental_spaces GROUP BY property_id HAVING SUM(is_default) = 0`);
+    for (const space of unmarkedSpaces) {
+      await query('UPDATE rental_spaces SET is_default = 1 WHERE id = ?', [space.id]);
+    }
+    await query(`INSERT INTO rental_spaces
+      (property_id, name, category, occupancy_type, space_type, description, rental_arrangement, max_occupants, capacity_slots, total_slots, monthly_rent, rent_basis, gender_preference, amenities, availability_status, is_default)
+      SELECT p.id, p.title, p.room_type,
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), 'shared', 'exclusive'),
+        p.room_type, p.description,
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), 'shared', 'exclusive'),
+        GREATEST(1, COALESCE(p.max_occupants, 1)),
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), GREATEST(1, COALESCE(p.total_slots, 1)), 1),
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), GREATEST(1, COALESCE(p.total_slots, 1)), 1),
+        p.monthly_rent,
+        IF(LOWER(REPLACE(REPLACE(TRIM(p.room_type), ' ', '_'), '-', '_')) IN ('bedspace', 'bed_space'), 'per_slot', 'per_space'),
+        p.gender_preference, p.amenities,
+        IF(p.status = 'approved', 'available', 'unavailable'), 1
+      FROM properties p
+      LEFT JOIN rental_spaces rs ON rs.property_id = p.id AND rs.is_default = 1
+      WHERE rs.id IS NULL`);
+
+    const bookingTableExists = (await query("SHOW TABLES LIKE 'bookings'"))[0] !== undefined;
+    if (bookingTableExists) {
+      await query('ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rental_space_id INT NULL AFTER property_id');
+      await query(`UPDATE bookings b
+        JOIN rental_spaces rs ON rs.property_id = b.property_id AND rs.is_default = 1
+        SET b.rental_space_id = rs.id
+        WHERE b.rental_space_id IS NULL`);
+    }
+    const categoryConstraint = await query(`SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'properties' AND CONSTRAINT_NAME = 'fk_properties_category'`);
+    if (!categoryConstraint.length) {
+      await query('ALTER TABLE properties ADD CONSTRAINT fk_properties_category FOREIGN KEY (property_category_id) REFERENCES property_categories(id)');
+    }
+    if (bookingTableExists) {
+      const bookingSpaceConstraint = await query(`SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bookings' AND CONSTRAINT_NAME = 'fk_bookings_rental_space'`);
+      if (!bookingSpaceConstraint.length) {
+        await query('ALTER TABLE bookings ADD CONSTRAINT fk_bookings_rental_space FOREIGN KEY (rental_space_id) REFERENCES rental_spaces(id) ON DELETE SET NULL');
+      }
+    }
+
+    console.log('✨ Database setup complete! You can now:');
+    console.log('   1. Run the backend: npm start');
+    console.log('   2. Create a new property with an image');
+    console.log('   3. Verify the image appears in owner and tenant views\n');
+    
+    process.exit(0);
+  } catch (error) {
+    console.error('\n❌ Error:', error.message);
+    console.error('\nTroubleshooting:');
+    console.error('1. Ensure MySQL is running');
+    console.error('2. Check your .env file has correct database credentials:');
+    console.error(`   - DATABASE_HOST=${DATABASE_HOST}`);
+    console.error(`   - DATABASE_PORT=${DATABASE_PORT}`);
+    console.error(`   - DATABASE_USER=${DATABASE_USER}`);
+    console.error(`   - DATABASE_NAME=${DATABASE_NAME}`);
+    console.error('3. Verify the database exists in MySQL\n');
+    process.exit(1);
+  }
+}
+
+checkAndFixDatabase();

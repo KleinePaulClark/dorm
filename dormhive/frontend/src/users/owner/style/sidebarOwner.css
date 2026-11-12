@@ -1,0 +1,566 @@
+.owner-shell {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  min-height: 100vh;
+  background: #edf3f7;
+  width: 100%;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+.owner-shell > .owner-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  padding: 1.25rem 0.9rem 1rem;
+  background: linear-gradient(180deg, #faf9f6 0%, #f3f5f5 48%, #e9eef2 100%);
+  color: #17344f;
+  border-right: 1px solid #dfeaf1;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  box-sizing: border-box;
+  overflow: hidden;
+  width: 72px;
+  transition: width 220ms ease, box-shadow 220ms ease;
+  box-shadow:
+    inset -10px 0 18px -18px rgba(22, 48, 71, 0.28),
+    8px 0 24px rgba(22, 48, 71, 0.035);
+}
+
+.owner-mobile-menu,
+.owner-nav-backdrop {
+  display: none;
+}
+.owner-shell > .owner-sidebar:hover,
+.owner-shell > .owner-sidebar:focus-within {
+  width: 248px;
+  box-shadow:
+    inset -10px 0 18px -18px rgba(22, 48, 71, 0.28),
+    8px 0 24px rgba(22, 48, 71, 0.1);
+}
+
+.owner-shell > .owner-sidebar::before,
+.owner-shell > .owner-sidebar::after {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  border-radius: 48% 52% 44% 56%;
+  filter: blur(18px);
+  opacity: 0.28;
+}
+
+.owner-shell > .owner-sidebar::before {
+  top: -90px;
+  left: -70px;
+  width: 210px;
+  height: 310px;
+  background: radial-gradient(ellipse, rgba(232, 219, 195, 0.42) 0%, rgba(232, 219, 195, 0) 72%);
+  transform: rotate(-18deg);
+}
+
+.owner-shell > .owner-sidebar::after {
+  right: -90px;
+  bottom: -110px;
+  width: 240px;
+  height: 330px;
+  background: radial-gradient(ellipse, rgba(190, 209, 218, 0.34) 0%, rgba(190, 209, 218, 0) 72%);
+  transform: rotate(24deg);
+}
+
+.owner-shell > .owner-sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+.owner-shell > .owner-sidebar::-webkit-scrollbar {
+  display: none;
+}
+
+.owner-shell .owner-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin: 0 10px 1.1rem;
+  color: #17344f;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: gap 220ms ease;
+}
+
+.owner-shell > .owner-sidebar:hover .owner-brand,
+.owner-shell > .owner-sidebar:focus-within .owner-brand {
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.owner-shell .owner-brand-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  flex: 0 0 44px;
+}
+
+.owner-shell .owner-brand-icon {
+  width: 36px;
+  height: 36px;
+  display: block;
+  fill: none;
+  stroke: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.owner-shell .owner-brand > span:last-child {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: width 180ms ease, opacity 140ms ease, transform 220ms ease;
+}
+.owner-shell > .owner-sidebar:hover .owner-brand > span:last-child,
+.owner-shell > .owner-sidebar:focus-within .owner-brand > span:last-child {
+  width: auto;
+  opacity: 1;
+  transform: none;
+}
+
+.owner-shell .owner-brand strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.owner-shell .brand-dorm {
+  color: #0d5f4a;
+}
+
+.owner-shell .brand-hive {
+  color: #c68a16;
+}
+
+.owner-shell .owner-brand small {
+  display: block;
+  margin-top: 4px;
+  color: #71869b;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.owner-shell .owner-sidebar-rule {
+  display: none;
+}
+
+.owner-shell .owner-sidebar .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 46px;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.7rem;
+  color: #5f7488;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.owner-shell .owner-sidebar .nav-item:hover,
+.owner-shell .owner-sidebar .nav-item.active {
+  background: #e9f7ef;
+  color: #147b5d;
+}
+
+.owner-shell .owner-sidebar .nav-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-8px);
+  transition: opacity 140ms ease, transform 220ms ease;
+}
+.owner-shell > .owner-sidebar:hover .nav-copy,
+.owner-shell > .owner-sidebar:focus-within .nav-copy {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+.owner-shell .owner-sidebar .nav-copy strong {
+  font-size: 13px;
+}
+
+.owner-shell .owner-sidebar .nav-copy small {
+  margin-top: 2px;
+  color: #71869b;
+  font-size: 11px;
+  opacity: 1;
+}
+.owner-support-notice {
+  display: grid;
+  gap: 5px;
+  margin: auto 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #dfeaf1;
+  border-radius: 0.7rem;
+  background: #f8fbfc;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-8px);
+  transition: opacity 140ms ease, transform 220ms ease;
+}
+.owner-shell > .owner-sidebar:hover .owner-support-notice,
+.owner-shell > .owner-sidebar:focus-within .owner-support-notice {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+.owner-support-notice strong {
+  color: #17344f;
+  font-size: 12px;
+}
+.owner-support-notice span {
+  color: #71869b;
+  font-size: 10px;
+}
+.owner-support-notice a {
+  color: #147b5d;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.owner-support-notice a:hover {
+  color: #24516f;
+}
+
+.owner-shell .owner-sidebar .nav-icon {
+  width: 1.95rem;
+  height: 1.95rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.62rem;
+  background: #f1f6f8;
+  color: #6b8396;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1;
+}
+.owner-shell .owner-sidebar .nav-item:hover .nav-icon,
+.owner-shell .owner-sidebar .nav-item.active .nav-icon {
+  background: #c9f0e2;
+  color: #147b5d;
+}
+
+.owner-shell .owner-sidebar .logout {
+  margin-top: 0;
+  border: 0;
+  border-radius: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  background: #17344f;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background-color 0.2s ease;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-8px);
+  transition: opacity 140ms ease, transform 220ms ease, background-color 0.2s ease;
+}
+.owner-shell > .owner-sidebar:hover .logout,
+.owner-shell > .owner-sidebar:focus-within .logout {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+.owner-shell .owner-sidebar .logout:hover {
+  background: #24516f;
+}
+
+@media (max-width: 980px) {
+  .owner-shell {
+    grid-template-columns: 1fr;
+    position: relative;
+  }
+
+  .owner-shell > .owner-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 248px;
+    transform: translateX(-105%);
+    transition: 0.2s;
+    z-index: 5;
+  }
+
+  .owner-shell.nav-open > .owner-sidebar {
+    transform: none;
+  }
+
+  .owner-mobile-menu {
+    position: absolute;
+    top: 0.85rem;
+    left: 0.85rem;
+    z-index: 12;
+    display: grid;
+    width: 2.75rem;
+    height: 2.75rem;
+    place-items: center;
+    border: 1px solid #d5dee4;
+    border-radius: 0.7rem;
+    background: #fff;
+    color: #17344f;
+    box-shadow: 0 5px 16px rgba(22, 48, 71, 0.12);
+    font-size: 1.35rem;
+  }
+
+  .owner-shell--dashboard .owner-mobile-menu {
+    display: none;
+  }
+
+  .owner-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9;
+    display: none;
+    border: 0;
+    background: rgba(23, 52, 79, 0.28);
+  }
+
+  .owner-shell.nav-open .owner-nav-backdrop {
+    display: block;
+  }
+}
+
+/* High-specificity overrides to ensure this file is the single source of truth
+   for owner sidebar styles. These rules use !important and specific selectors
+   so duplicate sidebar CSS in other files won't visually conflict. */
+
+.owner-shell > .owner-sidebar {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 2000 !important;
+  height: 100vh !important;
+  padding: 1.25rem 0.9rem 1rem !important;
+  background: linear-gradient(180deg, #faf9f6 0%, #f3f5f5 48%, #e9eef2 100%) !important;
+  color: #17344f !important;
+  border-right: 1px solid #dfeaf1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.28rem !important;
+  box-sizing: border-box !important;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  box-shadow:
+    inset -10px 0 18px -18px rgba(22, 48, 71, 0.28),
+    8px 0 24px rgba(22, 48, 71, 0.035) !important;
+  width: 72px !important;
+  transition: width 220ms ease, box-shadow 220ms ease !important;
+}
+
+.owner-shell--dashboard .leaflet-container {
+  position: relative;
+  z-index: 0;
+}
+
+.owner-shell > .owner-sidebar:hover,
+.owner-shell > .owner-sidebar:focus-within {
+  width: 248px !important;
+  box-shadow:
+    inset -10px 0 18px -18px rgba(22, 48, 71, 0.28),
+    8px 0 24px rgba(22, 48, 71, 0.1) !important;
+}
+
+.owner-shell > .owner-sidebar * {
+  font-family: inherit !important;
+}
+
+.owner-shell > .owner-sidebar .nav-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.7rem !important;
+  min-height: 46px !important;
+  padding: 0.55rem 0.65rem !important;
+  border-radius: 0.7rem !important;
+  color: #5f7488 !important;
+  text-decoration: none !important;
+}
+
+@media (min-width: 981px) {
+  .owner-shell > .owner-sidebar {
+    left: 0 !important;
+    transform: none !important;
+    padding-right: 0.6rem !important;
+    padding-left: 0.6rem !important;
+  }
+
+  .owner-shell > .owner-sidebar:hover,
+  .owner-shell > .owner-sidebar:focus-within {
+    padding-right: 0.9rem !important;
+    padding-left: 0.9rem !important;
+  }
+
+  .owner-shell > .owner-sidebar .owner-brand {
+    justify-content: flex-start;
+    gap: 0;
+    margin-right: 10px;
+    margin-left: 5px;
+  }
+
+  .owner-shell > .owner-sidebar:hover .owner-brand,
+  .owner-shell > .owner-sidebar:focus-within .owner-brand {
+    gap: 12px;
+    margin-left: 5px;
+  }
+
+  .owner-shell > .owner-sidebar .owner-brand > span:last-child,
+  .owner-shell > .owner-sidebar .nav-copy {
+    display: none;
+  }
+
+  .owner-shell > .owner-sidebar .nav-item {
+    height: 46px;
+    min-height: 46px !important;
+    box-sizing: border-box;
+  }
+
+  .owner-shell > .owner-sidebar:hover .owner-brand > span:last-child,
+  .owner-shell > .owner-sidebar:focus-within .owner-brand > span:last-child,
+  .owner-shell > .owner-sidebar:hover .nav-copy,
+  .owner-shell > .owner-sidebar:focus-within .nav-copy {
+    display: flex;
+  }
+}
+
+.owner-shell > .owner-sidebar .nav-item:hover,
+.owner-shell > .owner-sidebar .nav-item.active {
+  background: #e9f7ef !important;
+  color: #147b5d !important;
+}
+
+.owner-shell > .owner-sidebar .logout {
+  margin-top: 0 !important;
+  padding: 0.65rem 0.75rem !important;
+  border: 0 !important;
+  border-radius: 0.7rem !important;
+  background: #17344f !important;
+  color: #fff !important;
+  cursor: pointer !important;
+}
+
+@media (max-width: 980px) {
+  .owner-shell > .owner-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    width: 248px !important;
+    overflow: hidden !important;
+    padding: 14px 14px calc(10px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-105%) !important;
+    transition: transform 0.2s ease !important;
+  }
+  .owner-shell > .owner-sidebar .owner-brand {
+    flex-shrink: 0;
+    margin-bottom: 0.65rem;
+  }
+  .owner-shell > .owner-sidebar .nav-item {
+    min-height: 42px !important;
+    padding-block: 0.4rem !important;
+    flex-shrink: 0;
+  }
+  .owner-shell > .owner-sidebar .owner-support-notice {
+    margin: auto 0 6px;
+    padding: 8px 10px;
+    flex-shrink: 0;
+  }
+  .owner-shell > .owner-sidebar .logout {
+    min-height: 38px;
+    padding-block: 0.5rem !important;
+    flex-shrink: 0;
+  }
+  .owner-shell.nav-open > .owner-sidebar {
+    transform: none !important;
+  }
+  .owner-shell.nav-open > .owner-sidebar .owner-brand > span:last-child {
+    width: auto;
+  }
+  .owner-shell.nav-open > .owner-sidebar .owner-brand {
+    justify-content: flex-start;
+    gap: 12px;
+    margin-left: 5px;
+  }
+  .owner-shell > .owner-sidebar .owner-brand > span:last-child,
+  .owner-shell > .owner-sidebar .nav-copy,
+  .owner-shell > .owner-sidebar .owner-support-notice,
+  .owner-shell > .owner-sidebar .logout {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+  @media (max-height: 600px) {
+    .owner-shell > .owner-sidebar .owner-support-notice {
+      display: none;
+    }
+  }
+}
+
+@media (max-height: 700px) and (min-width: 981px) {
+  .owner-shell > .owner-sidebar {
+    gap: 0.2rem !important;
+    padding: 0.65rem 0.8rem 0.75rem !important;
+  }
+  .owner-shell .owner-brand {
+    gap: 10px;
+    margin: 0 6px 8px;
+  }
+  .owner-shell .owner-brand-mark {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    border-radius: 13px;
+  }
+  .owner-shell .owner-brand-icon {
+    width: 28px;
+    height: 28px;
+  }
+  .owner-shell .owner-brand strong {
+    font-size: 18px;
+  }
+  .owner-shell .owner-brand small {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+  .owner-shell > .owner-sidebar .nav-item {
+    gap: 0.55rem !important;
+    padding: 0.52rem 0.65rem !important;
+  }
+  .owner-shell .owner-sidebar .nav-icon {
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 0.65rem;
+  }
+  .owner-support-notice {
+    padding: 0.6rem 0.7rem;
+  }
+  .owner-shell > .owner-sidebar .logout {
+    padding: 0.6rem 0.7rem !important;
+  }
+}

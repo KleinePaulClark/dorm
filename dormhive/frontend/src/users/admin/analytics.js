@@ -1,0 +1,164 @@
+import { ensureAdminSidebarStyles, loadAdminStylesheet, renderAdminDateMeta, renderAdminSidebar } from './sidebarAdmin.js';
+import { applyAdminPrivacy } from './privacy.js';
+import { buildActivityFeed } from './analyticsUtils.js';
+
+export { buildActivityFeed };
+
+const API = window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1';
+const auth = () => ({ Authorization: `Bearer ${localStorage.getItem('dormhive.accessToken') ?? ''}` });
+const escapeHtml = (value = '') => {
+  const element = document.createElement('span');
+  element.textContent = String(value ?? '');
+  return element.innerHTML;
+};
+
+export function totalCount(rows = []) {
+  return rows.reduce((sum, item) => sum + (Number(item?.count) || 0), 0);
+}
+
+export function countByRole(rows = [], role) {
+  return rows
+    .filter((item) => item?.role === role)
+    .reduce((sum, item) => sum + (Number(item?.count) || 0), 0);
+}
+
+export function countByStatus(rows = [], status) {
+  return rows
+    .filter((item) => item?.status === status)
+    .reduce((sum, item) => sum + (Number(item?.count) || 0), 0);
+}
+
+export function buildDashboardMetrics({ users = [], properties = [], bookings = [] }) {
+  const totalUsers = totalCount(users);
+  const totalProperties = totalCount(properties);
+  const totalBookings = totalCount(bookings);
+  const pendingModeration = countByStatus(properties, 'pending');
+  const approvedBookings = countByStatus(bookings, 'approved');
+
+  return {
+    totalUsers,
+    totalProperties,
+    totalBookings,
+    pendingModeration,
+    approvalRate: totalBookings ? Math.round((approvedBookings / totalBookings) * 100) : 0,
+  };
+}
+
+export function buildAnalyticsCsv({ metrics, users = [], properties = [], bookings = [] }) {
+  const rows = [
+    ['Metric', 'Value'],
+    ['Total Users', metrics.totalUsers],
+    ['Active Listings', countByStatus(properties, 'approved')],
+    ['Booking Requests', metrics.totalBookings],
+    ['Pending Moderation', metrics.pendingModeration],
+    ['Booking Approval Rate', `${metrics.approvalRate}%`],
+    [],
+    ['User Role', 'Count'],
+    ['Tenants', countByRole(users, 'tenant')],
+    ['Landlords', countByRole(users, 'owner')],
+    ['Administrators', countByRole(users, 'admin')],
+    [],
+    ['Property Status', 'Count'],
+    ['Published Listings', countByStatus(properties, 'approved')],
+    ['Pending Listings', countByStatus(properties, 'pending')],
+    ['Rejected Listings', countByStatus(properties, 'rejected')],
+    [],
+    ['Booking Status', 'Count'],
+    ['Approved Bookings', countByStatus(bookings, 'approved')],
+    ['Pending Bookings', countByStatus(bookings, 'pending')],
+    ['Rejected Bookings', countByStatus(bookings, 'rejected')]
+  ];
+  return rows.map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+function css() {
+  return loadAdminStylesheet('analytics', new URL('./style/analytics.css', import.meta.url));
+}
+
+const icon = (name) => `<i class="bi ${name}" aria-hidden="true"></i>`;
+const roleRows = (users) => [['Tenants', countByRole(users, 'tenant'), 'green'], ['Landlords', countByRole(users, 'owner'), 'blue'], ['Administrators', countByRole(users, 'admin'), 'purple']];
+const statusCount = (rows, status) => countByStatus(rows, status);
+const emptyChart = () => `<div class="empty-chart"><span class="empty-chart-icon">${icon('bi-bar-chart')}</span><strong>No activity data available yet</strong><p>Activity will appear here as your platform grows.</p></div>`;
+const activityChart = (users, properties, bookings) => {
+  const values = [['Users', totalCount(users), 'green'], ['Listings', totalCount(properties), 'blue'], ['Bookings', totalCount(bookings), 'purple']];
+  const maximum = Math.max(...values.map(([, value]) => value), 1);
+  return `<div class="activity-bars">${values.map(([label, value, color]) => `<div class="activity-bar"><div class="activity-bar-track"><i class="${color}" style="height:${Math.max(value ? 8 : 0, Math.round((value / maximum) * 100))}%"></i></div><strong>${value}</strong><small>${label}</small></div>`).join('')}</div>`;
+};
+
+export async function renderAnalytics(root = document.querySelector('#app')) {
+  if (!root) throw new Error('Admin analytics requires #app.');
+  await Promise.all([css(), ensureAdminSidebarStyles()]);
+  root.innerHTML = `<div class="admin-shell">${renderAdminSidebar('analytics')}<div class="admin-main"><main class="admin-analytics"><section class="analytics-content">
+    <header class="analytics-heading"><div class="analytics-heading-copy"><div class="analytics-kicker-row"><div class="analytics-kicker">Analytics</div></div><h1>Analytics</h1><p>Track platform performance, growth, and activity at a glance.</p></div>${renderAdminDateMeta()}</header>
+    <section class="kpi-grid"><article class="kpi-card kpi-green"><div class="kpi-icon">${icon('bi-people')}</div><div><span>Total Users</span><strong data-kpi="users">0</strong><small>Current registered users</small><em>All account types</em></div></article><article class="kpi-card kpi-blue"><div class="kpi-icon">${icon('bi-house')}</div><div><span>Active Listings</span><strong data-kpi="listings">0</strong><small>Approved properties</small><em>Currently published</em></div></article><article class="kpi-card kpi-purple"><div class="kpi-icon">${icon('bi-calendar-event')}</div><div><span>Booking Requests</span><strong data-kpi="bookings">0</strong><small>All booking statuses</small><em>Recorded requests</em></div></article><article class="kpi-card kpi-orange"><div class="kpi-icon">${icon('bi-shield-check')}</div><div><span>Pending Moderation</span><strong data-kpi="pending">0</strong><small>Awaiting review</small><em>Requires attention</em></div></article></section>
+    <section class="analytics-top-grid"><article class="analytics-card activity-card"><div class="section-heading"><div class="heading-icon">${icon('bi-bar-chart-line')}</div><div><h2>Platform Totals</h2><p>Current records returned by the platform.</p></div><div class="section-actions"><button type="button" class="export-button">${icon('bi-download')} Export</button></div></div><div class="chart-legend"><span><i class="green"></i>Users</span><span><i class="blue"></i>Listings</span><span><i class="purple"></i>Bookings</span></div><div class="line-chart"><div class="y-axis"><span>100%</span><span>80%</span><span>60%</span><span>40%</span><span>20%</span><span>0%</span></div><div class="chart-area"><div class="grid-lines"></div><div data-activity-chart>${emptyChart()}</div></div></div></article><article class="analytics-card distribution-card"><div class="section-heading"><div class="heading-icon">${icon('bi-people')}</div><div><h2>User Distribution</h2><p>Users by account type.</p></div></div><div class="distribution-donut"><span>No user data yet</span></div><div class="distribution-list"></div></article></section>
+    <section class="analytics-bottom-grid"><article class="analytics-card performance-card"><div class="section-heading"><div class="heading-icon">${icon('bi-house-check')}</div><div><h2>Listings Performance</h2><p>Overview of property listings across DormHive.</p></div></div><div class="performance-list"></div></article><article class="analytics-card booking-card"><div class="section-heading"><div class="heading-icon">${icon('bi-calendar-event')}</div><div><h2>Booking Overview</h2><p>Booking request activity and status.</p></div><a href="#/admin/listingModeration">View bookings</a></div><div class="booking-counts"><div><span>Total Requests</span><strong data-booking="total">0</strong></div><div><span>Approved</span><strong data-booking="approved">0</strong></div><div><span>Pending</span><strong data-booking="pending">0</strong></div></div><div class="booking-empty"><div class="small-donut">${icon('bi-pie-chart')}</div><strong>No booking requests yet</strong><div class="mini-legend"><span><i class="green"></i>Approved 0</span><span><i class="orange"></i>Pending 0</span><span><i class="red"></i>Rejected 0</span></div></div></article><article class="analytics-card recent-card"><div class="section-heading"><div class="heading-icon">${icon('bi-activity')}</div><div><h2>Recent Activity</h2><p>Latest platform events.</p></div></div><div class="recent-list"></div></article></section>
+  </section></main></div></div>`;
+
+  const mobileMenu = root.querySelector('.admin-mobile-menu');
+  const analyticsKickerRow = root.querySelector('.analytics-kicker-row');
+  if (mobileMenu && analyticsKickerRow) analyticsKickerRow.prepend(mobileMenu);
+
+  try {
+    const responses = await Promise.all([
+      fetch(`${API}/analytics/users`, { headers: auth() }),
+      fetch(`${API}/analytics/bookings`, { headers: auth() }),
+      fetch(`${API}/analytics/properties`, { headers: auth() })
+    ]);
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+    if (responses.some((response) => !response.ok)) throw new Error(bodies.find((body, index) => !responses[index].ok)?.message || 'Unable to load analytics.');
+    const users = bodies[0].data ?? [];
+    const bookings = bodies[1].data ?? [];
+    const properties = bodies[2].data ?? [];
+    const metrics = buildDashboardMetrics({ users, properties, bookings });
+    root.querySelector('.export-button')?.addEventListener('click', () => {
+      const blob = new Blob([buildAnalyticsCsv({ metrics, users, properties, bookings })], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `dormhive-analytics-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+    root.querySelector('[data-kpi="users"]').textContent = metrics.totalUsers;
+    root.querySelector('[data-kpi="listings"]').textContent = statusCount(properties, 'approved');
+    root.querySelector('[data-kpi="bookings"]').textContent = metrics.totalBookings;
+    root.querySelector('[data-kpi="pending"]').textContent = metrics.pendingModeration;
+    const totalProperties = totalCount(properties);
+    root.querySelector('.chart-legend').innerHTML = [
+      ['green', 'Users', metrics.totalUsers],
+      ['blue', 'Listings', totalProperties],
+      ['purple', 'Bookings', metrics.totalBookings]
+    ].map(([color, label, value]) => `<span><i class="${color}"></i>${label} <strong>${value}</strong></span>`).join('');
+    root.querySelector('[data-activity-chart]').innerHTML = activityChart(users, properties, bookings);
+    const distributionValues = roleRows(users).map(([, value]) => value);
+    const distributionTotal = distributionValues.reduce((sum, value) => sum + value, 0);
+    const distributionStops = distributionValues.reduce((stops, value, index) => {
+      const start = index ? stops[index - 1].end : 0;
+      const end = start + (distributionTotal ? (value / distributionTotal) * 100 : 0);
+      stops.push({ end });
+      return stops;
+    }, []).map((stop, index) => `${['#16b98b', '#277fe7', '#8552e8'][index]} ${index ? '' : '0'} ${stop.end}%`).join(', ');
+    root.querySelector('.distribution-donut').style.background = distributionTotal ? `conic-gradient(${distributionStops})` : '';
+    root.querySelector('.distribution-donut span').textContent = distributionTotal ? `${metrics.totalUsers} users` : 'No user data yet';
+
+    root.querySelector('.distribution-list').innerHTML = roleRows(users).map(([label, value, color]) => `<div><span><i class="${color}"></i>${label}</span><strong>${value}</strong><small>${metrics.totalUsers ? Math.round((value / metrics.totalUsers) * 100) : 0}%</small></div>`).join('');
+    const propertyStatuses = [['Published Listings', 'approved', 'green', 'bi-house-check'], ['Pending Listings', 'pending', 'orange', 'bi-clock'], ['Rejected Listings', 'rejected', 'red', 'bi-x-circle'], ['Archived Listings', 'archived', 'gray', 'bi-archive']];
+    root.querySelector('.performance-list').innerHTML = propertyStatuses.map(([label, status, color, iconName]) => { const value = statusCount(properties, status); return `<div class="performance-row"><span class="performance-label"><i class="${color}">${icon(iconName)}</i>${label}</span><strong>${value}</strong><b><i class="${color}" style="width:${totalProperties ? Math.round((value / totalProperties) * 100) : 0}%"></i></b><small>${totalProperties ? Math.round((value / totalProperties) * 100) : 0}%</small></div>`; }).join('');
+    const approved = statusCount(bookings, 'approved');
+    const pending = statusCount(bookings, 'pending');
+    const rejected = statusCount(bookings, 'rejected');
+    root.querySelector('[data-booking="total"]').textContent = metrics.totalBookings;
+    root.querySelector('[data-booking="approved"]').textContent = approved;
+    root.querySelector('[data-booking="pending"]').textContent = pending;
+    root.querySelector('.booking-empty strong').textContent = metrics.totalBookings ? 'Booking status breakdown' : 'No booking requests yet';
+    root.querySelector('.mini-legend').innerHTML = `<span><i class="green"></i>Approved ${approved}</span><span><i class="orange"></i>Pending ${pending}</span><span><i class="red"></i>Rejected ${rejected}</span>`;
+    const activity = buildActivityFeed(bodies[0].activity ?? [], bodies[2].activity ?? [], bodies[1].activity ?? [], bodies[0].notifications ?? []);
+    root.querySelector('.recent-list').innerHTML = activity.length ? activity.slice(0, 4).map((item) => `<div class="recent-row"><i class="recent-icon ${item.icon}">${icon(item.icon === 'alert' ? 'bi-shield-exclamation' : item.icon === 'shield' ? 'bi-shield-check' : item.icon === 'user' ? 'bi-person-plus' : 'bi-arrow-repeat')}</i><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.detail.replace(/^\[|\]$/g, ''))}</p></div><time>${escapeHtml(item.time)}</time></div>`).join('') : '<div class="zero-state">No recent activity yet.</div>';
+    root.querySelector('.status')?.remove();
+    applyAdminPrivacy(root);
+  } catch (error) {
+    const recent = root.querySelector('.recent-list');
+    if (recent) recent.innerHTML = `<div class="zero-state">${error.message}</div>`;
+  }
+}
