@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS properties (
   amenities JSON,
   image_url VARCHAR(255),
   images JSON,
+  rental_areas JSON,
   ownership_document_id INT NULL,
   status ENUM('pending', 'approved', 'rejected', 'archived') DEFAULT 'pending',
   archived_status ENUM('pending', 'approved', 'rejected') NULL,
@@ -178,6 +179,7 @@ ALTER TABLE properties MODIFY COLUMN max_occupants INT NULL;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS gender_preference ENUM('co-ed', 'male', 'female') AFTER available_slots;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS amenities JSON AFTER gender_preference;
 ALTER TABLE properties ADD COLUMN IF NOT EXISTS images JSON AFTER image_url;
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS rental_areas JSON AFTER images;
 ALTER TABLE properties MODIFY COLUMN room_type VARCHAR(100) NOT NULL;
 
 -- Add first_name and last_name to users for separate name storage

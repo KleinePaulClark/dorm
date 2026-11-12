@@ -226,7 +226,7 @@ function showPropertyPhotoViewer(property) {
 
 function css() {
   const stylesheet = new URL('./style/myListing.css', import.meta.url);
-  stylesheet.searchParams.set('v', 'rental-space-management-foundation-1');
+  stylesheet.searchParams.set('v', 'rental-area-photo-grouping-2');
   return loadOwnerStylesheet('listings', stylesheet);
 }
 
@@ -353,7 +353,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                       </select><input name="customRoomType" type="text" maxlength="100" placeholder="Type your space type" aria-label="Custom space type" hidden></label>
                       <label>Rental arrangement<select name="rentalArrangement" required>
                         <option value="">Select occupancy arrangement</option>
-                        <option value="exclusive">Exclusive — one tenant or household rents the whole space</option>
+                        <option value="exclusive">Exclusive — one tenant rents the whole space</option>
                         <option value="shared">Shared — rent individual slots within this space</option>
                       </select></label>
                       <label>Monthly price (₱)<input name="monthlyRent" type="text" inputmode="decimal" autocomplete="off" required></label>
@@ -363,7 +363,11 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                         <option value="per_slot">Per occupant or slot</option>
                       </select></label>
                       <label>Maximum occupants<input name="maxOccupants" type="number" min="1" value="1" required></label>
-                      <label>Maximum rentable slots<input name="totalSlots" type="number" min="1" value="1" required></label>
+                      <div class="rental-slots-field">
+                        <label for="maximum-rentable-slots">Maximum rentable slots</label>
+                        <input id="maximum-rentable-slots" name="totalSlots" type="number" min="1" value="1" required>
+                        <div id="rental-slot-name-fields" class="rental-slot-name-fields" hidden></div>
+                      </div>
                       <label>Security deposit (₱)<input name="securityDeposit" type="number" min="0" step="0.01"></label>
                       <label>Advance payment (months)<input name="advancePaymentMonths" type="number" min="0" max="12" step="1"></label>
                       <label>Furnishing<select name="furnishingStatus" required>
@@ -409,7 +413,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                   <div id="property-form-step-3" class="property-form-step" hidden>
                     <div class="form-step-title">
                       <h3>Amenities &amp; Media</h3>
-                      <p>Add property photos, describe the property, and provide house rules</p>
+                      <p>Upload photos for every rentable area, describe the property, and provide house rules.</p>
                     </div>
                     <div class="amenities-section">
                       <label class="section-label">Select available amenities</label>
@@ -441,6 +445,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                         <span class="dropzone-hint">JPG, PNG, GIF or WEBP up to 2 MB each</span>
                       </label>
                       <div class="media-upload-status" aria-live="polite">Select as many photos as you need</div>
+                      <div id="rental-area-photo-fields" class="rental-area-photo-fields" hidden></div>
                     </div>
                     <div class="media-file-list" aria-live="polite"></div>
                     <div class="form-grid">
@@ -582,16 +587,174 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   const rentalArrangementSelect = propertyForm.elements.rentalArrangement;
   const rentBasisSelect = propertyForm.elements.rentBasis;
   const rentalSlotsInput = propertyForm.elements.totalSlots;
+  const rentalSlotNameFields = propertyForm.querySelector('#rental-slot-name-fields');
+  const rentalAreaPhotoFields = propertyForm.querySelector('#rental-area-photo-fields');
   const ownershipProofInput = propertyForm.elements.ownershipProof;
+  let rentalSlotNames = [];
+  const defaultRentalSlotName = (index) => {
+    let value = index + 1;
+    let letters = '';
+    while (value > 0) {
+      value -= 1;
+      letters = String.fromCharCode(65 + (value % 26)) + letters;
+      value = Math.floor(value / 26);
+    }
+    return `Room ${letters}`;
+  };
+  const rentalSlotCount = () => Math.max(1, Number(rentalSlotsInput.value) || 1);
+  const readRentalSlotNames = () => {
+    if (rentalSlotNameFields.classList.contains('is-compact')) {
+      const names = Array.from({ length: rentalSlotCount() }, (_, index) =>
+        rentalSlotNames[index] || defaultRentalSlotName(index));
+      const editor = rentalSlotNameFields.querySelector('.rental-slot-name-editor input');
+      if (editor) names[Number(editor.dataset.rentalSlotName)] = editor.value.trim();
+      return names;
+    }
+    return Array.from(rentalSlotNameFields.querySelectorAll('[data-rental-slot-name]'))
+      .map((input) => input.value.trim());
+  };
+  const requiresRentalAreaPhotoGrouping = () => {
+    return rentalArrangementSelect.value === 'shared';
+  };
+  const closeRentalSlotEditor = () => {
+    rentalSlotNameFields.querySelector('.rental-slot-name-editor')?.remove();
+    rentalSlotNameFields.querySelectorAll('.rental-slot-name-box[aria-expanded="true"]')
+      .forEach((button) => button.setAttribute('aria-expanded', 'false'));
+  };
+  const positionRentalSlotEditor = (button, editor) => {
+    const rect = button.getBoundingClientRect();
+    const editorWidth = Math.min(260, window.innerWidth - 24);
+    const hasRoomOnRight = rect.right + 8 + editorWidth <= window.innerWidth - 12;
+    const left = hasRoomOnRight
+      ? rect.right + 8
+      : Math.max(12, rect.left - editorWidth - 8);
+    const top = Math.max(12, Math.min(rect.top, window.innerHeight - editor.offsetHeight - 12));
+    editor.style.left = `${left}px`;
+    editor.style.top = `${top}px`;
+  };
+  const openRentalSlotEditor = (button) => {
+    const index = Number(button.dataset.rentalSlotBox);
+    if (!Number.isInteger(index)) return;
+    closeRentalSlotEditor();
+    button.setAttribute('aria-expanded', 'true');
+    const editor = document.createElement('label');
+    editor.className = 'rental-slot-name-editor';
+    editor.innerHTML = `<span>Rename ${escape(defaultRentalSlotName(index))}</span>
+      <input type="text" maxlength="160" data-rental-slot-name="${index}" aria-label="Name for rentable area ${index + 1}" required>`;
+    const input = editor.querySelector('input');
+    input.value = rentalSlotNames[index] || defaultRentalSlotName(index);
+    rentalSlotNameFields.append(editor);
+    positionRentalSlotEditor(button, editor);
+    input.focus();
+    input.select();
+  };
+  const renderRentalSlotNames = () => {
+    const isShared = rentalArrangementSelect.value === 'shared';
+    const count = isShared ? rentalSlotCount() : 0;
+    const currentNames = readRentalSlotNames();
+    const retainedCount = Math.max(count, rentalSlotNames.length);
+    rentalSlotNames = Array.from({ length: retainedCount }, (_, index) =>
+      currentNames[index] || rentalSlotNames[index] || defaultRentalSlotName(index));
+    rentalSlotNameFields.hidden = !isShared;
+    rentalSlotNameFields.classList.toggle('is-compact', count >= 10);
+    if (!isShared) {
+      rentalSlotNameFields.innerHTML = '';
+      return;
+    }
+    rentalSlotNameFields.innerHTML = count >= 10
+      ? rentalSlotNames.slice(0, count).map((name, index) => `
+        <button type="button" class="rental-slot-name-box" data-rental-slot-box="${index}"
+          aria-label="${escape(name)}" aria-expanded="false" title="${escape(name)}">
+          ${escape(defaultRentalSlotName(index).replace('Room ', ''))}
+        </button>`).join('')
+      : rentalSlotNames.slice(0, count).map((name, index) => `
+        <label class="rental-slot-name-field">Area ${index + 1} name
+          <input type="text" maxlength="160" value="${escape(name)}" data-rental-slot-name="${index}" aria-label="Name for rentable area ${index + 1}" required>
+        </label>`).join('');
+  };
+  const renderRentalAreaPhotoFields = () => {
+    const isShared = rentalArrangementSelect.value === 'shared';
+    rentalAreaPhotoFields.hidden = !isShared;
+    const globalPhotoLabel = propertyForm.querySelector('.media-dropzone-label');
+    globalPhotoLabel.hidden = isShared;
+    if (!isShared) {
+      rentalAreaPhotoFields.innerHTML = '';
+      return;
+    }
+    const names = readRentalSlotNames();
+    rentalAreaPhotoFields.innerHTML = Array.from({ length: rentalSlotCount() }, (_, index) => {
+      const name = names[index] || rentalSlotNames[index] || defaultRentalSlotName(index);
+      return `<label class="rental-area-photo-field" data-rental-area-index="${index}">
+        <strong>${escape(name)}</strong>
+        <span>Upload at least one photo. JPG, PNG, GIF or WEBP up to 2 MB each.</span>
+        <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple data-rental-area-index="${index}" aria-label="Photos for ${escape(name)}">
+      </label>`;
+    }).join('');
+  };
+  const updateRentalAreaPhotoLabels = () => {
+    const names = readRentalSlotNames();
+    rentalAreaPhotoFields.querySelectorAll('.rental-area-photo-field').forEach((field) => {
+      const index = Number(field.dataset.rentalAreaIndex);
+      const name = names[index] || rentalSlotNames[index] || defaultRentalSlotName(index);
+      field.querySelector('strong').textContent = name;
+      field.querySelector('input').setAttribute('aria-label', `Photos for ${name}`);
+    });
+    renderUploadFiles();
+  };
   const syncRentalArrangement = () => {
     const isShared = rentalArrangementSelect.value === 'shared';
+    const isSelected = ['exclusive', 'shared'].includes(rentalArrangementSelect.value);
+    rentalArrangementSelect.classList.toggle('rental-arrangement-muted', isSelected);
     rentalSlotsInput.disabled = !isShared;
     rentalSlotsInput.required = isShared;
     if (!isShared) rentalSlotsInput.value = '1';
     if (rentalArrangementSelect.value === 'exclusive') rentBasisSelect.value = 'per_space';
     if (rentalArrangementSelect.value === 'shared' && !rentBasisSelect.value) rentBasisSelect.value = 'per_slot';
+    renderRentalSlotNames();
+    renderRentalAreaPhotoFields();
   };
   rentalArrangementSelect.addEventListener('change', syncRentalArrangement);
+  rentalSlotsInput.addEventListener('input', () => {
+    renderRentalSlotNames();
+    renderRentalAreaPhotoFields();
+  });
+  rentalSlotsInput.addEventListener('change', () => {
+    renderRentalAreaPhotoFields();
+  });
+  rentalSlotNameFields.addEventListener('input', (event) => {
+    const index = Number(event.target.dataset.rentalSlotName);
+    if (Number.isInteger(index)) {
+      rentalSlotNames[index] = event.target.value;
+      updateRentalAreaPhotoLabels();
+      const box = rentalSlotNameFields.querySelector(`[data-rental-slot-box="${index}"]`);
+      if (box) {
+        box.title = event.target.value || defaultRentalSlotName(index);
+        box.setAttribute('aria-label', event.target.value || defaultRentalSlotName(index));
+      }
+    }
+  });
+  rentalSlotNameFields.addEventListener('click', (event) => {
+    const button = event.target.closest('.rental-slot-name-box');
+    if (button) openRentalSlotEditor(button);
+  });
+  rentalSlotNameFields.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && event.target.matches('.rental-slot-name-editor input')) {
+      closeRentalSlotEditor();
+      rentalSlotNameFields.querySelector(`[data-rental-slot-box="${event.target.dataset.rentalSlotName}"]`)?.focus();
+    } else if (event.key === 'Enter' && event.target.matches('.rental-slot-name-editor input')) {
+      event.preventDefault();
+      closeRentalSlotEditor();
+    }
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!rentalSlotNameFields.contains(event.target)) closeRentalSlotEditor();
+  });
+  window.addEventListener('resize', () => {
+    const editor = rentalSlotNameFields.querySelector('.rental-slot-name-editor');
+    const button = rentalSlotNameFields.querySelector('.rental-slot-name-box[aria-expanded="true"]');
+    if (editor && button) positionRentalSlotEditor(button, editor);
+  });
+  syncRentalArrangement();
   const isOwnershipProofRequired = () => {
     if (!propertyForm.dataset.editingPropertyId || propertyForm.dataset.hasOwnershipProof !== 'true') return true;
     return [
@@ -632,6 +795,9 @@ export async function renderMyListing(root = document.querySelector('#app')) {
         <img class="media-file-preview" src="${item.previewUrl}" alt="">
         <div class="media-file-details">
           <div class="media-file-heading"><strong title="${escape(item.file.name)}">${escape(item.file.name)}</strong><span>${formatFileSize(item.file.size)}</span></div>
+          ${item.rentalAreaIndex !== null && item.rentalAreaIndex !== undefined && rentalArrangementSelect.value === 'shared'
+            ? `<small class="media-file-area">${escape(readRentalSlotNames()[item.rentalAreaIndex] || rentalSlotNames[item.rentalAreaIndex] || defaultRentalSlotName(item.rentalAreaIndex))}</small>`
+            : ''}
           <div class="media-progress-row"><div class="media-progress-track"><span style="width: ${item.progress}%"></span></div><strong class="media-progress-percent">${item.progress}%</strong></div>
           <small class="media-file-status"><span class="media-file-status-icon">${item.error ? '!' : item.progress === 100 ? '✓' : '○'}</span>${escape(item.error || (item.progress === 100 ? 'Uploaded successfully' : item.uploading ? 'Uploading...' : 'Ready to upload'))}</small>
         </div>
@@ -649,7 +815,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     imageInput.files = dataTransfer.files;
   };
 
-  const addPhotos = (files) => {
+  const addPhotos = (files, rentalAreaIndex = null) => {
     const errors = [];
     Array.from(files || []).forEach((file) => {
       if (!SUPPORTED_PROPERTY_PHOTO_TYPES.includes(file.type)) {
@@ -660,8 +826,11 @@ export async function renderMyListing(root = document.querySelector('#app')) {
         errors.push(`${file.name}: file exceeds the 2 MB limit.`);
         return;
       }
-      if (selectedPhotos.some((item) => !item.existing && item.file.name === file.name && item.file.size === file.size)) return;
-      const photo = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, previewUrl: URL.createObjectURL(file), progress: 0, error: '', uploading: false, uploadedUrl: '' };
+      if (selectedPhotos.some((item) => !item.existing
+        && item.file.name === file.name
+        && item.file.size === file.size
+        && item.rentalAreaIndex === rentalAreaIndex)) return;
+      const photo = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, previewUrl: URL.createObjectURL(file), progress: 0, error: '', uploading: false, uploadedUrl: '', rentalAreaIndex };
       selectedPhotos.push(photo);
       photoSelectionChanged = true;
       photo.uploadPromise = uploadPhoto(photo);
@@ -680,8 +849,15 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   };
 
   if (imageInput) {
-    imageInput.addEventListener('change', (event) => addPhotos(event.target.files));
+    imageInput.addEventListener('change', (event) => addPhotos(event.target.files, 0));
   }
+  rentalAreaPhotoFields.addEventListener('change', (event) => {
+    const input = event.target.closest('input[data-rental-area-index]');
+    if (input) {
+      addPhotos(input.files, Number(input.dataset.rentalAreaIndex));
+      input.value = '';
+    }
+  });
 
   if (mediaDropzone) {
     ['dragenter', 'dragover'].forEach((eventName) => {
@@ -704,7 +880,12 @@ export async function renderMyListing(root = document.querySelector('#app')) {
       mediaDropzone.classList.remove('dragover');
       const files = event.dataTransfer?.files;
       if (files?.length) {
-        addPhotos(files);
+        const area = event.target.closest('[data-rental-area-index]');
+        if (rentalArrangementSelect.value === 'shared' && !area) {
+          setFormMessage('Drop photos onto the matching rentable area, or use its upload field.');
+          return;
+        }
+        addPhotos(files, area ? Number(area.dataset.rentalAreaIndex) : 0);
       }
     });
   }
@@ -791,6 +972,14 @@ export async function renderMyListing(root = document.querySelector('#app')) {
         setFormMessage('Please enter a valid number of rental slots.');
         return false;
       }
+      if (rentalArrangement === 'shared') {
+        const names = readRentalSlotNames();
+        const normalizedNames = names.map((name) => name.toLowerCase());
+        if (names.length !== Number(totalSlots) || names.some((name) => !name) || new Set(normalizedNames).size !== names.length) {
+          setFormMessage('Give every rentable area a unique name before continuing.');
+          return false;
+        }
+      }
       if (!Number.isInteger(maxOccupants) || maxOccupants < 1) {
         setFormMessage('Please enter a valid maximum occupant count.');
         return false;
@@ -834,8 +1023,24 @@ export async function renderMyListing(root = document.querySelector('#app')) {
       const isEditing = !!propertyForm.dataset.editingPropertyId;
       // Only require image when creating new property, not when editing
       if (!isEditing && !imageField?.files?.length) {
-        setFormMessage('Please upload a property image.');
-        return false;
+        if (!selectedPhotos.length) {
+          setFormMessage('Please upload a property image.');
+          return false;
+        }
+      }
+      if (requiresRentalAreaPhotoGrouping()) {
+        const names = readRentalSlotNames();
+        if (selectedPhotos.some((photo) => photo.rentalAreaIndex >= names.length)) {
+          setFormMessage('Remove photos assigned to rentable areas that are no longer included.');
+          return false;
+        }
+        const missingArea = names.findIndex((_, index) =>
+          !selectedPhotos.some((photo) => photo.rentalAreaIndex === index)
+        );
+        if (missingArea !== -1) {
+          setFormMessage(`Upload at least one photo for ${names[missingArea]}.`);
+          return false;
+        }
       }
       return true;
     }
@@ -850,6 +1055,12 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     const amenities = Array.from(propertyForm.querySelectorAll('input[name="amenities"]:checked'))
       .map((checkbox) => formatAmenityLabel(checkbox.value));
     const photos = selectedPhotos.map((photo) => photo.previewUrl).filter(Boolean);
+    const rentalAreas = requiresRentalAreaPhotoGrouping()
+      ? readRentalSlotNames().map((name, index) => ({
+        name,
+        photos: selectedPhotos.filter((photo) => photo.rentalAreaIndex === index).map((photo) => photo.previewUrl)
+      }))
+      : [];
     const values = [
       ['Property category', propertyCategory],
       ['Primary space type', roomType],
@@ -867,15 +1078,21 @@ export async function renderMyListing(root = document.querySelector('#app')) {
 
     listingReviewSummary.innerHTML = `
       <dl class="listing-review-facts">${values.map(([label, value]) => `<div><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>`).join('')}</dl>
-      <section class="listing-review-gallery" aria-label="Listing photos">
+      ${rentalAreas.length ? `<section class="listing-review-gallery" aria-label="Rentable area photos">
+        ${rentalAreas.map((area) => `<div class="listing-review-area"><h4>${escape(area.name)} <span>${area.photos.length} photos</span></h4>
+          ${area.photos.length ? `<div class="listing-review-photos">${area.photos.map((photo, index) => `<img src="${escape(photo)}" alt="${escape(area.name)} photo ${index + 1}" />`).join('')}</div>` : '<p>No photos selected.</p>'}
+        </div>`).join('')}
+      </section>` : ''}
+      ${rentalAreas.length ? '' : `<section class="listing-review-gallery" aria-label="Listing photos">
         <h4>Photos <span>${photos.length}</span></h4>
         ${photos.length ? `<div class="listing-review-photos">${photos.map((photo, index) => `<img src="${escape(photo)}" alt="Listing photo ${index + 1}" />`).join('')}</div>` : '<p>No photos selected.</p>'}
-      </section>`;
+      </section>`}`;
   };
 
   const closeModal = () => {
     propertyModal.hidden = true;
     propertyForm.reset();
+    rentalSlotNames = [];
     syncRentalArrangement();
     propertyForm.elements.address.value = '';
     propertyForm.elements.municipality.value = '';
@@ -1240,6 +1457,18 @@ export async function renderMyListing(root = document.querySelector('#app')) {
         formData.append('imageUrl', photoUrls[0] ?? '');
         formData.append('images', JSON.stringify(photoUrls));
       }
+      if (requiresRentalAreaPhotoGrouping()) {
+        const rentalAreas = readRentalSlotNames().map((name, index) => ({
+          name,
+          images: selectedPhotos
+            .filter((photo) => photo.rentalAreaIndex === index)
+            .map((photo) => photo.uploadedUrl)
+            .filter(Boolean)
+        }));
+        formData.set('rentalAreas', JSON.stringify(rentalAreas));
+      } else if (isEditing && rentalArrangementSelect.value !== 'shared') {
+        formData.set('rentalAreas', JSON.stringify([]));
+      }
       const finalResponse = await fetch(url, { method, headers: authHeaders(), body: formData });
       let responseBody = {};
       try { responseBody = await finalResponse.json(); } catch {}
@@ -1595,6 +1824,18 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     if (typeof existingImages === 'string') {
       try { existingImages = JSON.parse(existingImages); } catch { existingImages = []; }
     }
+    let existingRentalAreas = propertyData.rental_areas;
+    if (typeof existingRentalAreas === 'string') {
+      try { existingRentalAreas = JSON.parse(existingRentalAreas); } catch { existingRentalAreas = []; }
+    }
+    existingRentalAreas = Array.isArray(existingRentalAreas) ? existingRentalAreas : [];
+    rentalSlotNames = existingRentalAreas.map((area) => String(area.name || '').trim());
+    const rentalAreaByImage = new Map();
+    existingRentalAreas.forEach((area, index) => {
+      (Array.isArray(area.images) ? area.images : []).forEach((url) => {
+        if (!rentalAreaByImage.has(url)) rentalAreaByImage.set(url, index);
+      });
+    });
     const existingPhotoUrls = [...new Set([
       propertyData.image_url,
       ...(Array.isArray(existingImages) ? existingImages : [])
@@ -1607,7 +1848,8 @@ export async function renderMyListing(root = document.querySelector('#app')) {
       progress: 100,
       error: '',
       uploading: false,
-      existing: true
+      existing: true,
+      rentalAreaIndex: rentalAreaByImage.get(url) ?? null
     }));
     renderUploadFiles();
 
@@ -1638,6 +1880,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     form.elements.advancePaymentMonths.value = propertyData.advance_payment_months ?? '';
     form.elements.furnishingStatus.value = propertyData.furnishing_status || 'unspecified';
     syncRentalArrangement();
+    renderUploadFiles();
     form.elements.genderPreference.value = propertyData.gender_preference || '';
     form.elements.address.value = propertyData.address || '';
     form.elements.municipality.value = propertyData.municipality || '';

@@ -138,14 +138,15 @@ export async function create(ownerId, input) {
       `INSERT INTO properties
         (owner_id, title, description, address, municipality, barangay, latitude, longitude,
          room_type, monthly_rent, max_occupants, total_slots, available_slots, gender_preference,
-         amenities, image_url, images, ownership_document_id, property_category_id, house_rules, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         amenities, image_url, images, rental_areas, ownership_document_id, property_category_id, house_rules, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       [
         ownerId, input.title, input.description ?? null, input.address, input.municipality,
         input.barangay ?? null, input.latitude ?? null, input.longitude ?? null, input.roomType,
         input.monthlyRent, input.maxOccupants ?? null, totalSlots, totalSlots,
         input.genderPreference || null, input.amenities ?? null, input.imageUrl ?? null,
-        JSON.stringify(input.images ?? []), input.ownershipDocumentId ?? null, propertyCategoryId,
+        JSON.stringify(input.images ?? []), input.rentalAreas ? JSON.stringify(input.rentalAreas) : null,
+        input.ownershipDocumentId ?? null, propertyCategoryId,
         input.houseRules ?? null
       ]
     );
@@ -181,6 +182,7 @@ export async function update(id, input) {
     amenities = COALESCE(?, amenities),
     image_url = COALESCE(?, image_url),
     images = COALESCE(?, images),
+    rental_areas = COALESCE(?, rental_areas),
     ownership_document_id = COALESCE(?, ownership_document_id),
     property_category_id = COALESCE(?, property_category_id),
     house_rules = COALESCE(?, house_rules),
@@ -191,6 +193,7 @@ export async function update(id, input) {
     input.monthlyRent ?? null, input.maxOccupants ?? null, input.totalSlots ?? null,
     input.genderPreference !== undefined, input.genderPreference ?? null, input.amenities ?? null,
     input.imageUrl ?? null, input.images ? JSON.stringify(input.images) : null,
+    input.rentalAreas ? JSON.stringify(input.rentalAreas) : null,
     input.ownershipDocumentId ?? null, propertyCategoryId, input.houseRules ?? null, input.status ?? null, id
   ]);
   await query(`UPDATE rental_spaces SET

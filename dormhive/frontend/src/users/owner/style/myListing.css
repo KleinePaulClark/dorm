@@ -354,7 +354,7 @@ body {
 /* Form Step Indicator */
 .form-step-indicator {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: 16px;
   margin-bottom: 24px;
@@ -416,7 +416,7 @@ body {
   width: 32px;
   height: 2px;
   background: #d8e2dd;
-  margin-top: 16px;
+  margin-top: 19px;
   flex-shrink: 0;
 }
 
@@ -476,6 +476,16 @@ body {
   color: #71847d;
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+.listing-review-area + .listing-review-area {
+  margin-top: 16px;
+}
+
+.listing-review-area p {
+  margin: 0;
+  color: #71847d;
+  font-size: 0.82rem;
 }
 
 .listing-review-gallery > p {
@@ -542,15 +552,146 @@ body {
   color: #5c6f68;
 }
 
+.rental-slots-field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #5c6f68;
+}
+
+.rental-slot-name-fields {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.rental-slot-name-fields.is-compact {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.rental-slot-name-box {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #d8e2dd;
+  border-radius: 8px;
+  background: #f3f7f5;
+  color: #35584e;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.rental-slot-name-box:hover,
+.rental-slot-name-box[aria-expanded="true"] {
+  border-color: #1aa87a;
+  background: #e8f6f0;
+  color: #147b5d;
+}
+
+.rental-slot-name-editor {
+  position: fixed;
+  z-index: 1500;
+  display: grid;
+  width: min(260px, calc(100vw - 24px));
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #cbd9d2;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 45, 37, 0.2);
+  color: #526e64;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.rental-slot-name-editor input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #d8e2dd;
+  border-radius: 6px;
+  color: #1f2a2d;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.rental-slot-name-fields[hidden],
+.rental-area-photo-fields[hidden],
+.media-dropzone-label[hidden] {
+  display: none;
+}
+
+.rental-slot-name-field {
+  display: grid;
+  gap: 5px;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.rental-area-photo-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.rental-area-photo-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px dashed #aebfc8;
+  border-radius: 10px;
+  background: #fff;
+  color: #354b59;
+  cursor: pointer;
+}
+
+.rental-area-photo-field span {
+  color: #71838d;
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.rental-area-photo-field input {
+  width: 100%;
+  font-size: 0.75rem;
+}
+
 .form-grid input,
 .form-grid select,
 .form-grid textarea {
+  width: 100%;
+  max-width: 100%;
   padding: 0.8rem;
   border: 1px solid #d8e2dd;
   border-radius: 8px;
   font: inherit;
   background: #fff;
   transition: border-color 0.2s ease;
+}
+
+.form-grid select.rental-arrangement-muted {
+  color: #1b2d2a;
+}
+
+.form-grid select option {
+  color: #73837c;
 }
 
 .form-grid input:focus,
@@ -847,6 +988,14 @@ body {
 .media-progress-percent {
   color: #80909a;
   font-size: 0.72rem;
+}
+
+.media-file-area {
+  display: block;
+  margin-top: 3px;
+  color: #526e64;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 .media-file-status-icon {
   display: inline-grid;

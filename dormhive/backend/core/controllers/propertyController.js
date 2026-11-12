@@ -24,6 +24,51 @@ const validateImageReferences = (values) => {
   return references;
 };
 
+function validateRentalAreas(value, arrangement, totalSlots, propertyImages) {
+  if (arrangement !== 'shared') return null;
+  let areas = value;
+  if (typeof areas === 'string') {
+    try { areas = JSON.parse(areas); } catch {
+      const error = new Error('Rentable area details must be valid JSON.');
+      error.statusCode = 422;
+      error.expose = true;
+      throw error;
+    }
+  }
+  if (!Array.isArray(areas) || areas.length !== totalSlots) {
+    const error = new Error('Provide a name and photos for every rentable area.');
+    error.statusCode = 422;
+    error.expose = true;
+    throw error;
+  }
+  const imageSet = new Set(propertyImages);
+  const names = new Set();
+  return areas.map((area) => {
+    const name = typeof area?.name === 'string' ? area.name.trim() : '';
+    if (!name || name.length > 160 || names.has(name.toLowerCase())) {
+      const error = new Error('Every rentable area must have a unique name of 160 characters or fewer.');
+      error.statusCode = 422;
+      error.expose = true;
+      throw error;
+    }
+    names.add(name.toLowerCase());
+    if (!Array.isArray(area.images) || area.images.length === 0) {
+      const error = new Error(`Upload at least one photo for ${name}.`);
+      error.statusCode = 422;
+      error.expose = true;
+      throw error;
+    }
+    const images = validateImageReferences(area.images);
+    if (!images.length || images.some((image) => !imageSet.has(image))) {
+      const error = new Error(`Photos for ${name} must also be included in the listing photo collection.`);
+      error.statusCode = 422;
+      error.expose = true;
+      throw error;
+    }
+    return { name, images };
+  });
+}
+
 const MAX_PROPERTY_PHOTO_SIZE = 2 * 1024 * 1024;
 const MAX_OWNERSHIP_PROOF_SIZE = 5 * 1024 * 1024;
 const ownershipProofTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
@@ -151,6 +196,12 @@ export async function create(request, response, next) {
     const proofMetadata = validateOwnershipProof(ownershipProofFile, request.user.role === 'owner');
     const requestedImages = parseImages(request.body.images);
     const imageReferences = validateImageReferences([...requestedImages, request.body.imageUrl]);
+    const rentalAreas = validateRentalAreas(
+      request.body.rentalAreas,
+      request.body.rentalArrangement,
+      totalSlots,
+      imageReferences
+    );
     const stagedImages = imageReferences.filter((image) => /^\/api\/v1\/media\/\d+$/.test(image));
     const fileMetadata = validatePropertyPhotos(uploadedFiles);
     const stagedIds = stagedImages.map((image) => Number(image.match(/^\/api\/v1\/media\/(\d+)$/)[1]));
@@ -170,6 +221,7 @@ export async function create(request, response, next) {
     const input = {
       ...request.body,
       totalSlots,
+      rentalAreas,
       ownershipDocumentId: null,
       imageUrl: imageReferences[0] ?? (fileMetadata.length ? null : request.body.imageUrl ?? null),
       images: imageReferences,
@@ -240,6 +292,18 @@ export async function update(request, response, next) {
     const property = await properties.findById(request.params.id);
     if (!property) return response.status(404).json({ message: 'Property not found.' });
     if (property.owner_id !== request.user.id && request.user.role !== 'admin') return response.status(403).json({ message: 'Permission denied.' });
+    const rentalAreas = request.body.rentalAreas === undefined
+      ? undefined
+      : (request.body.rentalArrangement ?? property.rental_arrangement) === 'shared'
+        ? validateRentalAreas(
+          request.body.rentalAreas,
+          request.body.rentalArrangement ?? property.rental_arrangement,
+          Number(request.body.totalSlots ?? property.total_slots ?? 1),
+          request.body.images === undefined && request.body.imageUrl === undefined
+            ? [...parseImages(property.images), property.image_url].filter(Boolean)
+            : imageReferences
+        )
+        : [];
     const stagedIds = stagedImages.map((image) => Number(image.match(/^\/api\/v1\/media\/(\d+)$/)[1]));
     await mediaFiles.assertPropertyPhotosAvailable(stagedIds, property.id, request.user.id);
 
@@ -292,6 +356,7 @@ export async function update(request, response, next) {
 
     const input = {
       ...request.body,
+      rentalAreas,
       imageUrl: undefined,
       images: undefined,
       ownershipDocumentId: undefined,
