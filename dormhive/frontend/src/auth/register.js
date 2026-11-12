@@ -42,7 +42,8 @@ export async function renderRegister(root = document.querySelector('#app')) {
           <div class="form-inner">
             <h1 id="login-title">Login</h1>
             <p>Sign in to continue</p>
-            <div class="input-box"><input id="email" name="email" type="email" placeholder="Email" required><i class='bx bxs-envelope'></i></div>
+            <p class="auth-message" role="alert" hidden></p>
+            <div class="input-box"><input id="login-identifier" name="identifier" type="text" placeholder="Username or email" autocomplete="username" required><i class='bx bxs-user'></i></div>
             <div class="input-box"><input id="password" name="password" type="password" placeholder="Password" required minlength="8"><i class='bx bxs-lock-alt'></i></div>
             <div class="forgot-link"><a href="#/forgot-password">Forgot Password?</a></div>
             <button class="btn auth-submit" type="submit">Login</button>
@@ -62,7 +63,8 @@ export async function renderRegister(root = document.querySelector('#app')) {
               <div class="input-box"><input id="first_name" name="first_name" type="text" placeholder="First name" required maxlength="120"></div>
               <div class="input-box"><input id="last_name" name="last_name" type="text" placeholder="Last name" required maxlength="120"></div>
             </div>
-            <div class="input-box"><input id="email_r" name="email" type="email" placeholder="Email address" required></div>
+            <div class="input-box"><input id="username_r" name="username" type="text" placeholder="Username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9._]{3,30}" title="Use 3–30 letters, numbers, periods, or underscores." autocomplete="username"></div>
+            <div class="input-box"><input id="email_r" name="email" type="email" placeholder="Email address" required autocomplete="email"></div>
             <div class="input-box phone-field">
               <div class="phone-input-box" aria-label="Philippines phone number">
                 <span class="phone-country" aria-label="Philippines, country code +63">
@@ -80,13 +82,8 @@ export async function renderRegister(root = document.querySelector('#app')) {
             </fieldset>
             <div class="input-box"><input id="password_r" name="password" type="password" placeholder="Password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
             <div class="input-box"><input id="confirm_password" name="confirmPassword" type="password" placeholder="Confirm password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
-            <div class="identity-upload">
-              <label for="identity-document">Upload a valid ID <span aria-hidden="true">*</span></label>
-              <input id="identity-document" name="identityDocument" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" required>
-              <small>Government-issued or another valid ID, up to 5 MB. Only admins can view it for account verification.</small>
-            </div>
             <label class="checkbox-label"><input name="terms" type="checkbox" required> I agree to the <a href="#/terms">Terms and conditions</a>.</label>
-            <button class="btn auth-submit" type="submit">Submit for review</button>
+            <button class="btn auth-submit" type="submit">Create account</button>
           </div>
         </form>
       </div>
@@ -121,10 +118,12 @@ export async function renderRegister(root = document.querySelector('#app')) {
   const registerBtn = root.querySelector('.register-btn');
   const loginBtn = root.querySelector('.login-btn');
   const form = root.querySelector('.form-box.register form');
-  const message = root.querySelector('.auth-message');
+  const message = root.querySelector('.form-box.register .auth-message');
   const submitButton = root.querySelector('.auth-submit');
+  const loginForm = root.querySelector('.form-box.login form');
+  const loginMessage = root.querySelector('.form-box.login .auth-message');
+  const loginSubmitButton = root.querySelector('.form-box.login .auth-submit');
   const phoneInput = root.querySelector('#phone_r');
-  const identityDocumentInput = root.querySelector('#identity-document');
   const roleInput = root.querySelector('#role');
   root.querySelectorAll('[data-role-choice]').forEach((choice) => {
     choice.addEventListener('change', () => {
@@ -213,6 +212,31 @@ export async function renderRegister(root = document.querySelector('#app')) {
   registerBtn.addEventListener('click', () => container.classList.add('active'));
   loginBtn.addEventListener('click', () => container.classList.remove('active'));
 
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!loginForm.reportValidity()) return;
+    loginSubmitButton.disabled = true;
+    loginSubmitButton.textContent = 'Signing in…';
+    loginMessage.hidden = true;
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(new FormData(loginForm)))
+      });
+      const body = await readApiResponse(response);
+      if (!response.ok) throw new Error(getApiErrorMessage(body, 'Unable to sign in.'));
+      localStorage.setItem('dormhive.accessToken', body.accessToken);
+      localStorage.setItem('dormhive.user', JSON.stringify(body.user));
+      const destinations = { tenant: '/tenant/dashboardTenant', owner: '/owner/dashboardOwner', admin: '/admin/dashboardAdmin' };
+      window.location.assign(`#${destinations[body.user.role] ?? '/'}`);
+    } catch (error) {
+      showMessage(loginMessage, error instanceof TypeError ? 'Unable to reach the sign-in service. Please check that the backend is running.' : error.message);
+      loginSubmitButton.disabled = false;
+      loginSubmitButton.textContent = 'Login';
+    }
+  });
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
 
@@ -230,31 +254,26 @@ export async function renderRegister(root = document.querySelector('#app')) {
       phoneInput.focus();
       return;
     }
-    const identityDocument = identityDocumentInput.files[0];
-    if (!identityDocument || identityDocument.size > 5 * 1024 * 1024) {
-      showMessage(message, 'Choose an ID file that is no larger than 5 MB.');
-      identityDocumentInput.focus();
-      return;
-    }
-
     const { terms, confirmPassword: _confirmPassword, ...payload } = formData;
     payload.phone = toServerPhoneValue(payload.phone);
-    const requestData = new FormData();
-    Object.entries(payload).forEach(([key, value]) => requestData.append(key, value));
 
     submitButton.disabled = true;
-    submitButton.textContent = 'Submitting…';
+    submitButton.textContent = 'Creating account…';
     if (message) message.hidden = true;
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/register`, { method: 'POST', body: requestData });
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
       const body = await readApiResponse(response);
       if (!response.ok) throw new Error(getApiErrorMessage(body, 'Unable to create your account.'));
-      showToast({ message: 'Application submitted. Check your email after admin review.', type: 'success' });
+      showToast({ message: 'Account created. You can sign in after admin review.', type: 'success' });
       navigate('/login', true);
     } catch (error) {
       showMessage(message, error.message);
       submitButton.disabled = false;
-      submitButton.textContent = 'Submit for review';
+      submitButton.textContent = 'Create account';
     }
   });
 }

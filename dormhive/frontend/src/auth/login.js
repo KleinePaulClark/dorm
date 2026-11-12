@@ -60,7 +60,7 @@ export async function renderLogin(root = document.querySelector('#app')) {
             <h1 id="login-title">Login</h1>
             <p>Sign in to continue</p>
             <p class="auth-message" role="alert" hidden></p>
-            <div class="input-box"><input id="email" name="email" type="email" placeholder="Email" autocomplete="off" required></div>
+            <div class="input-box"><input id="login-identifier" name="identifier" type="text" placeholder="Username or email" autocomplete="username" required></div>
             <div class="input-box"><input id="password" name="password" type="password" placeholder="Password" autocomplete="new-password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
             <div class="forgot-link"><a href="#/forgot-password">Forgot Password?</a></div>
             <button class="btn auth-submit" type="submit">Login</button>
@@ -79,7 +79,8 @@ export async function renderLogin(root = document.querySelector('#app')) {
               <div class="input-box"><input id="first_name" name="first_name" type="text" placeholder="First name" required maxlength="120"></div>
               <div class="input-box"><input id="last_name" name="last_name" type="text" placeholder="Last name" required maxlength="120"></div>
             </div>
-            <div class="input-box"><input id="email_r" name="email" type="email" placeholder="Email address" required></div>
+            <div class="input-box"><input id="username_r" name="username" type="text" placeholder="Username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9._]{3,30}" title="Use 3–30 letters, numbers, periods, or underscores." autocomplete="username"></div>
+            <div class="input-box"><input id="email_r" name="email" type="email" placeholder="Email address" required autocomplete="email"></div>
             <div class="input-box phone-field">
               <div class="phone-input-box" aria-label="Philippines phone number">
                 <span class="phone-country" aria-label="Philippines, country code +63">
@@ -97,13 +98,8 @@ export async function renderLogin(root = document.querySelector('#app')) {
             </fieldset>
             <div class="input-box"><input id="password_r" name="password" type="password" placeholder="Password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
             <div class="input-box"><input id="confirm_password" name="confirmPassword" type="password" placeholder="Confirm password" required minlength="8"><button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false"><i class='bx bx-show' aria-hidden="true"></i></button></div>
-            <div class="identity-upload">
-              <label for="identity-document">Upload a valid ID <span aria-hidden="true">*</span></label>
-              <input id="identity-document" name="identityDocument" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" required>
-              <small>Government-issued or another valid ID, up to 5 MB. Only admins can view it for account verification.</small>
-            </div>
             <label class="checkbox-label"><input name="terms" type="checkbox" required> I agree to the <a href="#/terms">Terms and conditions</a>.</label>
-            <button class="btn auth-submit" type="submit">Submit for review</button>
+            <button class="btn auth-submit" type="submit">Create account</button>
           </div>
         </form>
       </div>
@@ -142,7 +138,6 @@ export async function renderLogin(root = document.querySelector('#app')) {
   const loginSubmitButton = root.querySelector('.form-box.login .auth-submit');
   const registerSubmitButton = root.querySelector('.form-box.register .auth-submit');
   const phoneInput = root.querySelector('#phone_r');
-  const identityDocumentInput = root.querySelector('#identity-document');
   const roleInput = root.querySelector('#role');
   root.querySelectorAll('[data-role-choice]').forEach((choice) => {
     choice.addEventListener('change', () => {
@@ -415,30 +410,25 @@ export async function renderLogin(root = document.querySelector('#app')) {
         phoneInput.focus();
         return;
       }
-      const identityDocument = identityDocumentInput.files[0];
-      if (!identityDocument || identityDocument.size > 5 * 1024 * 1024) {
-        showMessage(registerMessage, 'Choose an ID file that is no larger than 5 MB.');
-        identityDocumentInput.focus();
-        return;
-      }
-
       const { terms, confirmPassword: _confirmPassword, ...payload } = formData;
       payload.phone = toServerPhoneValue(payload.phone);
-      const requestData = new FormData();
-      Object.entries(payload).forEach(([key, value]) => requestData.append(key, value));
       registerSubmitButton.disabled = true;
-      registerSubmitButton.textContent = 'Submitting…';
+      registerSubmitButton.textContent = 'Creating account…';
       if (registerMessage) registerMessage.hidden = true;
       try {
-        const response = await fetch(`${API_BASE_URL}/auth/register`, { method: 'POST', body: requestData });
+        const response = await fetch(`${API_BASE_URL}/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
         const body = await readApiResponse(response);
         if (!response.ok) throw new Error(getApiErrorMessage(body, 'Unable to create your account.'));
-        showToast({ message: 'Application submitted. Check your email after admin review.', type: 'success' });
+        showToast({ message: 'Account created. You can sign in after admin review.', type: 'success' });
         navigate('/login', true);
       } catch (error) {
         showMessage(registerMessage, error.message);
         registerSubmitButton.disabled = false;
-        registerSubmitButton.textContent = 'Submit for review';
+        registerSubmitButton.textContent = 'Create account';
       }
     });
   }

@@ -1,4 +1,4 @@
-﻿import { showToast } from '../../components/toast.js';
+import { showToast } from '../../components/toast.js';
 import { successDialog } from '../../components/modal.js';
 import { ensureOwnerSidebarStyles, loadOwnerStylesheet, renderOwnerSidebar, updateListingCountsInSidebar } from './sidebarOwner.js';
 import { withMediaAccessToken } from '../../services/mediaAccess.js';
@@ -84,6 +84,18 @@ const AMENITY_LABELS = {
   utilities_included: 'Utilities included',
   cable_ready: 'Cable ready'
 };
+const AMENITY_ICONS = {
+  wifi: 'wifi-high',
+  laundry: 'washing-machine',
+  kitchen: 'cooking-pot',
+  aircon: 'fan',
+  pets_allowed: 'paw-print',
+  dishwasher: 'oven',
+  balcony: 'plant',
+  parking: 'car',
+  utilities_included: 'lightning',
+  cable_ready: 'plug'
+};
 const formatAmenityLabel = (value = '') => AMENITY_LABELS[String(value).toLowerCase()] ?? String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 const normalizeAmenities = (item = {}) => {
   const raw = item.amenities;
@@ -96,8 +108,10 @@ const normalizeAmenities = (item = {}) => {
   return String(raw).split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
 };
 const renderAmenitiesChips = (item = {}) => normalizeAmenities(item)
-  .slice(0, 4)
-  .map((amenity) => `<span class="amenity-chip">${escape(formatAmenityLabel(amenity))}</span>`)
+  .map((amenity) => {
+    const label = formatAmenityLabel(amenity);
+    return `<span class="amenity-chip" data-amenity-label="${escape(label)}" title="${escape(label)}" aria-label="${escape(label)}" tabindex="0"><i class="ph ph-${AMENITY_ICONS[amenity] ?? 'sparkle'}" aria-hidden="true"></i><span class="amenity-chip-label">${escape(label)}</span></span>`;
+  })
   .join('');
 const clearSession = () => { localStorage.removeItem('dormhive.accessToken'); localStorage.removeItem('dormhive.user'); };
 
@@ -226,7 +240,7 @@ function showPropertyPhotoViewer(property) {
 
 function css() {
   const stylesheet = new URL('./style/myListing.css', import.meta.url);
-  stylesheet.searchParams.set('v', 'rental-area-photo-grouping-2');
+  stylesheet.searchParams.set('v', 'portfolio-amenity-tooltips-1');
   return loadOwnerStylesheet('listings', stylesheet);
 }
 
@@ -288,7 +302,6 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                   <h2>Create a listing</h2>
                   <button type="button" class="modal-close">×</button>
                 </div>
-                <p id="property-form-message" class="form-message" hidden></p>
 
                 <div class="form-step-indicator" id="form-step-indicator">
                   <div class="step-marker" data-step="1">
@@ -470,6 +483,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
                     </div>
                   </div>
                 </form>
+                <p id="property-form-message" class="form-message" role="alert" aria-live="assertive" hidden></p>
 
               </div>
             </div>
@@ -531,6 +545,35 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     </div>`;
 
   const portfolioBody = root.querySelector('#portfolio-body');
+  const portfolioTable = root.querySelector('.portfolio-table');
+  const fitPortfolioTableHeadings = () => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    portfolioTable.querySelectorAll('thead th').forEach((heading) => {
+      const baseSize = 12.8;
+      const minimumSize = 9;
+      const computed = getComputedStyle(heading);
+      const availableWidth = heading.clientWidth
+        - parseFloat(computed.paddingLeft)
+        - parseFloat(computed.paddingRight);
+      context.font = `700 ${baseSize}px ${computed.fontFamily}`;
+      const words = heading.textContent.trim().toLocaleUpperCase().split(/\s+/);
+      const widestWord = Math.max(...words.map((word) => {
+        const letterSpacing = parseFloat(computed.letterSpacing) || 0;
+        return context.measureText(word).width + Math.max(0, word.length - 1) * letterSpacing;
+      }));
+      const fontSize = Math.max(minimumSize, Math.min(baseSize, baseSize * availableWidth / widestWord));
+      heading.style.fontSize = `${fontSize}px`;
+    });
+  };
+  fitPortfolioTableHeadings();
+  if (typeof ResizeObserver !== 'undefined') {
+    const headingResizeObserver = new ResizeObserver(fitPortfolioTableHeadings);
+    headingResizeObserver.observe(portfolioTable);
+  } else {
+    window.addEventListener('resize', fitPortfolioTableHeadings);
+  }
   const addPropertyButton = root.querySelector('.add-property');
   const propertyModal = root.querySelector('#property-modal');
   const listingSuccessModal = root.querySelector('#listing-success-modal');
@@ -682,14 +725,20 @@ export async function renderMyListing(root = document.querySelector('#app')) {
       return;
     }
     const names = readRentalSlotNames();
-    rentalAreaPhotoFields.innerHTML = Array.from({ length: rentalSlotCount() }, (_, index) => {
+    const areaFields = Array.from({ length: rentalSlotCount() }, (_, index) => {
       const name = names[index] || rentalSlotNames[index] || defaultRentalSlotName(index);
-      return `<label class="rental-area-photo-field" data-rental-area-index="${index}">
-        <strong>${escape(name)}</strong>
-        <span>Upload at least one photo. JPG, PNG, GIF or WEBP up to 2 MB each.</span>
-        <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple data-rental-area-index="${index}" aria-label="Photos for ${escape(name)}">
-      </label>`;
+      return `<div class="rental-area-photo-field" data-rental-area-index="${index}">
+        <div class="rental-area-photo-heading">
+          <strong>${escape(name)}</strong>
+        </div>
+        <div class="rental-area-photo-thumbnails" aria-label="Photos for ${escape(name)}"></div>
+        <div class="rental-area-photo-actions">
+          <button type="button" class="rental-area-photo-add">Add photos</button>
+          <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple data-rental-area-index="${index}" aria-label="Photos for ${escape(name)}" hidden>
+        </div>
+      </div>`;
     }).join('');
+    rentalAreaPhotoFields.innerHTML = `<p class="rental-area-photo-instruction">Add at least one photo per rentable area. JPG, PNG, GIF or WEBP, up to 2 MB each.</p>${areaFields}`;
   };
   const updateRentalAreaPhotoLabels = () => {
     const names = readRentalSlotNames();
@@ -717,9 +766,11 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   rentalSlotsInput.addEventListener('input', () => {
     renderRentalSlotNames();
     renderRentalAreaPhotoFields();
+    renderUploadFiles();
   });
   rentalSlotsInput.addEventListener('change', () => {
     renderRentalAreaPhotoFields();
+    renderUploadFiles();
   });
   rentalSlotNameFields.addEventListener('input', (event) => {
     const index = Number(event.target.dataset.rentalSlotName);
@@ -784,28 +835,78 @@ export async function renderMyListing(root = document.querySelector('#app')) {
     propertyFormMessage.hidden = false;
     propertyFormMessage.textContent = message;
     propertyFormMessage.className = `form-message ${type === 'success' ? 'success' : ''}`;
+    propertyFormMessage.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
 
   const formatFileSize = (bytes) => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
+  const renderMediaFile = (item) => `
+    <article class="media-file ${item.error ? 'is-error' : ''}" data-photo-id="${item.id}">
+      <img class="media-file-preview" src="${escape(item.previewUrl)}" alt="">
+      <div class="media-file-details">
+        <div class="media-file-heading"><strong title="${escape(item.file.name)}">${escape(item.file.name)}</strong><span>${formatFileSize(item.file.size)}</span></div>
+        ${item.rentalAreaIndex !== null && item.rentalAreaIndex !== undefined && rentalArrangementSelect.value === 'shared'
+          ? `<small class="media-file-area">${escape(readRentalSlotNames()[item.rentalAreaIndex] || rentalSlotNames[item.rentalAreaIndex] || defaultRentalSlotName(item.rentalAreaIndex))}</small>`
+          : ''}
+        <div class="media-progress-row"><div class="media-progress-track"><span style="width: ${item.progress}%"></span></div><strong class="media-progress-percent">${item.progress}%</strong></div>
+        <small class="media-file-status"><span class="media-file-status-icon">${item.error ? '!' : item.progress === 100 ? '✓' : '○'}</span>${escape(item.error || (item.progress === 100 ? 'Uploaded successfully' : item.uploading ? 'Uploading...' : 'Ready to upload'))}</small>
+      </div>
+      ${item.error ? `<button type="button" class="media-file-retry" data-photo-id="${item.id}">Retry</button>` : ''}
+      <button type="button" class="media-file-remove" data-photo-id="${item.id}" aria-label="Remove ${escape(item.file.name)}">&times;</button>
+    </article>`;
+
+  const renderRentalAreaPhotoThumbnails = () => {
+    if (!rentalAreaPhotoFields || rentalArrangementSelect.value !== 'shared') return;
+    rentalAreaPhotoFields.querySelectorAll('.rental-area-photo-field').forEach((field) => {
+      const index = Number(field.dataset.rentalAreaIndex);
+      const thumbnails = field.querySelector('.rental-area-photo-thumbnails');
+      const photos = selectedPhotos.filter((photo) => photo.rentalAreaIndex === index);
+      const visiblePhotos = photos.slice(0, 3).map((photo, photoIndex) => `
+        <div class="rental-area-photo-thumbnail ${photo.error ? 'is-error' : ''}" title="${escape(photo.file.name)}">
+          <button type="button" class="rental-area-photo-view" data-photo-id="${photo.id}" aria-label="View ${escape(photo.file.name)}">
+            <img src="${escape(photo.previewUrl)}" alt="">
+            ${photoIndex === 2 && photos.length > 3 ? `<span class="rental-area-photo-overflow" aria-label="${photos.length - 3} more photos">+${photos.length - 3}</span>` : ''}
+          </button>
+          ${photo.progress < 100 && !photo.error ? `<span class="rental-area-photo-progress" style="width: ${photo.progress}%"></span>` : ''}
+          ${photo.error ? `<button type="button" class="rental-area-photo-retry" data-photo-id="${photo.id}" aria-label="Retry upload of ${escape(photo.file.name)}" title="Retry upload">↻</button>` : ''}
+          <button type="button" class="rental-area-photo-remove" data-photo-id="${photo.id}" aria-label="Remove ${escape(photo.file.name)}">&times;</button>
+        </div>`).join('');
+      thumbnails.innerHTML = visiblePhotos;
+    });
+  };
+
   const renderUploadFiles = () => {
     if (!mediaFileList) return;
-    mediaFileList.innerHTML = selectedPhotos.map((item) => `
-      <article class="media-file ${item.error ? 'is-error' : ''}" data-photo-id="${item.id}">
-        <img class="media-file-preview" src="${item.previewUrl}" alt="">
-        <div class="media-file-details">
-          <div class="media-file-heading"><strong title="${escape(item.file.name)}">${escape(item.file.name)}</strong><span>${formatFileSize(item.file.size)}</span></div>
-          ${item.rentalAreaIndex !== null && item.rentalAreaIndex !== undefined && rentalArrangementSelect.value === 'shared'
-            ? `<small class="media-file-area">${escape(readRentalSlotNames()[item.rentalAreaIndex] || rentalSlotNames[item.rentalAreaIndex] || defaultRentalSlotName(item.rentalAreaIndex))}</small>`
-            : ''}
-          <div class="media-progress-row"><div class="media-progress-track"><span style="width: ${item.progress}%"></span></div><strong class="media-progress-percent">${item.progress}%</strong></div>
-          <small class="media-file-status"><span class="media-file-status-icon">${item.error ? '!' : item.progress === 100 ? '✓' : '○'}</span>${escape(item.error || (item.progress === 100 ? 'Uploaded successfully' : item.uploading ? 'Uploading...' : 'Ready to upload'))}</small>
-        </div>
-        ${item.error ? `<button type="button" class="media-file-retry" data-photo-id="${item.id}">Retry</button>` : ''}
-        <button type="button" class="media-file-remove" data-photo-id="${item.id}" aria-label="Remove ${escape(item.file.name)}">&times;</button>
-      </article>`).join('');
+    const isShared = rentalArrangementSelect.value === 'shared';
+    const unassignedPhotos = isShared
+      ? selectedPhotos.filter((photo) => photo.rentalAreaIndex === null || photo.rentalAreaIndex === undefined)
+      : selectedPhotos;
+    mediaFileList.innerHTML = unassignedPhotos.map(renderMediaFile).join('');
+    mediaFileList.hidden = isShared && unassignedPhotos.length === 0;
+    renderRentalAreaPhotoThumbnails();
     uploadStatus.textContent = selectedPhotos.length === 1 ? '1 photo selected' : `${selectedPhotos.length} photos selected`;
     uploadStatus.classList.toggle('selected', selectedPhotos.length > 0);
+  };
+
+  const showRentalAreaPhoto = (photo) => {
+    const viewer = document.createElement('dialog');
+    viewer.className = 'rental-area-photo-viewer';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'rental-area-photo-viewer-close';
+    closeButton.setAttribute('aria-label', 'Close photo preview');
+    closeButton.textContent = '×';
+    const image = document.createElement('img');
+    image.src = photo.previewUrl;
+    image.alt = photo.file.name;
+    closeButton.addEventListener('click', () => viewer.close());
+    viewer.addEventListener('click', (event) => {
+      if (event.target === viewer) viewer.close();
+    });
+    viewer.addEventListener('close', () => viewer.remove(), { once: true });
+    viewer.append(closeButton, image);
+    document.body.append(viewer);
+    viewer.showModal();
   };
 
   const syncInputFiles = () => {
@@ -858,6 +959,32 @@ export async function renderMyListing(root = document.querySelector('#app')) {
       input.value = '';
     }
   });
+  rentalAreaPhotoFields.addEventListener('click', (event) => {
+    const viewButton = event.target.closest('.rental-area-photo-view');
+    if (viewButton) {
+      const photo = selectedPhotos.find((item) => item.id === viewButton.dataset.photoId);
+      if (photo) showRentalAreaPhoto(photo);
+      return;
+    }
+    const retryButton = event.target.closest('.rental-area-photo-retry');
+    if (retryButton) {
+      const photo = selectedPhotos.find((item) => item.id === retryButton.dataset.photoId);
+      if (photo) photo.uploadPromise = uploadPhoto(photo);
+      return;
+    }
+    const removeButton = event.target.closest('.rental-area-photo-remove');
+    if (removeButton) {
+      const photo = selectedPhotos.find((item) => item.id === removeButton.dataset.photoId);
+      if (photo) photoSelectionChanged = true;
+      if (photo && !photo.existing) URL.revokeObjectURL(photo.previewUrl);
+      selectedPhotos = selectedPhotos.filter((item) => item.id !== removeButton.dataset.photoId);
+      syncInputFiles();
+      renderUploadFiles();
+      return;
+    }
+    const addButton = event.target.closest('.rental-area-photo-add');
+    if (addButton) addButton.parentElement.querySelector('input[type="file"]').click();
+  });
 
   if (mediaDropzone) {
     ['dragenter', 'dragover'].forEach((eventName) => {
@@ -908,6 +1035,7 @@ export async function renderMyListing(root = document.querySelector('#app')) {
   });
 
   renderUploadFiles();
+  rentalArrangementSelect.addEventListener('change', renderUploadFiles);
 
   const updateStepIndicator = (step) => {
     const stepMarkers = formStepIndicator.querySelectorAll('.step-marker');

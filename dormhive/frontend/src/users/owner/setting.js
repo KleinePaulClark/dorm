@@ -2,6 +2,7 @@ import { ensureOwnerSidebarStyles, loadOwnerStylesheet, renderOwnerSidebar, upda
 import { withMediaAccessToken } from '../../services/mediaAccess.js';
 import { buildInitialsAvatarSvg } from '../../services/avatar.js';
 import { openAvatarEditor, uploadAvatarPhoto } from '../../services/avatarEditor.js';
+import { setupProfilePrivacy } from '../../services/profilePrivacy.js';
 
 const API = window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1';
 const API_BASE = API.replace(/\/api\/v1\/?$/, '');
@@ -24,7 +25,7 @@ function resolveImageUrl(value = '') {
 
 function css() {
   const stylesheet = new URL('./style/setting.css', import.meta.url);
-  stylesheet.searchParams.set('v', 'mobile-header-inline-4');
+  stylesheet.searchParams.set('v', 'profile-privacy-1');
   return loadOwnerStylesheet('setting', stylesheet);
 }
 
@@ -147,6 +148,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
   profileForm.querySelector('#owner-profile-last').value = user.last_name ?? (legacyParts.slice(1).join(' ') || legacyParts[legacyParts.length - 1] || '');
   profileForm.querySelector('#owner-profile-email').value = displayEmail;
   profileForm.querySelector('#owner-profile-phone').value = user.phone ?? '';
+  const profilePrivacy = setupProfilePrivacy(profileForm, root.querySelector('.user-name'));
 
   function displayNotice(element, text, state = 'error') {
     if (!element) return;
@@ -183,6 +185,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
 
   function setEditState(enabled) {
     isEditMode = enabled;
+    profilePrivacy.setEditing(enabled);
     const inputs = profileForm.querySelectorAll('input');
     inputs.forEach((el) => {
       if (el.id !== 'owner-profile-email') el.readOnly = !enabled;
@@ -272,8 +275,8 @@ export async function renderSetting(root = document.querySelector('#app')) {
 
       user = saveUser({ ...user, ...data.data, ...payload, avatar_url: currentAvatarUrl || data.data?.avatar_url || user.avatar_url || '' });
       displayNotice(notice, 'Profile saved.', 'success');
+      root.querySelector('.user-name').textContent = payload.name || 'Alexander J. Reyes';
       setEditState(false);
-      document.querySelector('.user-name').textContent = payload.name || 'Alexander J. Reyes';
       syncAvatarDisplay(user.avatar_url || currentAvatarUrl || '');
     } catch (err) {
       displayNotice(notice, err.message || 'Failed to update profile.', 'error');

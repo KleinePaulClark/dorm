@@ -2,10 +2,15 @@ import { query } from '../config/database.js';
 import crypto from 'node:crypto';
 
 // Return a computed `name` while exposing first_name and last_name when available
-const publicFields = "id, COALESCE(NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), ''), name) AS name, first_name, last_name, email, phone, avatar_url, role, status, verification_status, archived_status, archived_at, last_login_at, last_active_at, created_at, updated_at";
+const publicFields = "id, COALESCE(NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), ''), name) AS name, first_name, last_name, username, email, phone, avatar_url, role, status, verification_status, archived_status, archived_at, last_login_at, last_active_at, created_at, updated_at";
 
 export async function findByEmail(email) {
   const rows = await query(`SELECT ${publicFields}, password_hash FROM users WHERE email = ? LIMIT 1`, [email]);
+  return rows[0] ?? null;
+}
+
+export async function findByUsername(username) {
+  const rows = await query(`SELECT ${publicFields}, password_hash FROM users WHERE username = ? LIMIT 1`, [username]);
   return rows[0] ?? null;
 }
 
@@ -29,9 +34,9 @@ export async function findByIdWithPassword(id) {
   return rows[0] ?? null;
 }
 
-export async function create({ name, first_name, last_name, email, passwordHash, phone, role, status = 'active', verificationStatus = 'approved' }) {
+export async function create({ name, first_name, last_name, username, email, passwordHash, phone, role, status = 'active', verificationStatus = 'approved' }) {
   // store both legacy `name` and the individual name parts
-  const result = await query('INSERT INTO users (name, first_name, last_name, email, password_hash, phone, role, status, verification_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [name ?? (first_name || last_name ? `${first_name ?? ''} ${last_name ?? ''}`.trim() : null), first_name ?? null, last_name ?? null, email, passwordHash, phone, role, status, verificationStatus]);
+  const result = await query('INSERT INTO users (name, first_name, last_name, username, email, password_hash, phone, role, status, verification_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [name ?? (first_name || last_name ? `${first_name ?? ''} ${last_name ?? ''}`.trim() : null), first_name ?? null, last_name ?? null, username ?? null, email, passwordHash, phone, role, status, verificationStatus]);
   return findById(result.insertId);
 }
 
@@ -56,7 +61,7 @@ export async function reviewVerification(id, verificationStatus) {
   const result = await query(
     `UPDATE users
      SET verification_status = ?, status = ?
-     WHERE id = ? AND verification_status = 'pending' AND verification_document_id IS NOT NULL`,
+     WHERE id = ? AND verification_status = 'pending'`,
     [verificationStatus, nextStatus, id]
   );
   return result.affectedRows === 1;

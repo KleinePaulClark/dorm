@@ -6,14 +6,11 @@ import {
   createPasswordResetToken,
   consumePasswordResetToken,
   findByEmail,
+  findByUsername,
   recordLogin,
   revokePasswordResetToken,
-  remove,
-  setVerificationDocument,
   updatePassword
 } from '../models/User.js';
-import * as mediaFiles from '../models/Media.js';
-import { validateUpload } from '../utils/fileValidation.js';
 import { isEmailConfigured, sendPasswordResetEmail } from '../services/email.js';
 
 function tokenFor(user) {
@@ -129,56 +126,61 @@ function isValidPhone(value) {
   return typeof value === 'string' && /^\+?[0-9\s().-]{7,20}$/.test(value.trim());
 }
 
+export function normalizeUsername(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+export function isValidUsername(value) {
+  return typeof value === 'string' && /^[a-z0-9._]{3,30}$/.test(value);
+}
+
 export async function register(request, response, next) {
   try {
-    const { first_name, last_name, name, email, password, role = 'tenant', phone } = request.body;
-    if (!request.file) return response.status(422).json({ message: 'Upload a clear photo or PDF of a government-issued or other valid ID.' });
-    const document = validateUpload(request.file);
-    if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(document.mimeType)) {
-      return response.status(422).json({ message: 'ID documents must be a JPEG, PNG, WEBP, or PDF file.' });
-    }
+    const { first_name, last_name, name, username, email, password, role = 'tenant', phone } = request.body;
+    const normalizedUsername = normalizeUsername(username);
+    const normalizedEmail = String(email).trim().toLowerCase();
     const normalizedPhone = typeof phone === 'string' ? phone.trim() : phone;
     if (!['tenant', 'owner'].includes(role)) return response.status(422).json({ message: 'Role must be tenant or owner.' });
+    if (!isValidUsername(normalizedUsername)) {
+      return response.status(422).json({ message: 'Username must be 3–30 characters and use only letters, numbers, periods, or underscores.' });
+    }
     if (!normalizedPhone || !isValidPhilippinePhoneNumber(normalizedPhone)) {
       return response.status(422).json({ message: 'Phone number must be exactly 10 digits.' });
     }
-    if (!/^\S+@\S+\.\S+$/.test(email) || password.length < 8 || (normalizedPhone && !isValidPhone(normalizedPhone))) {
+    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail) || password.length < 8 || (normalizedPhone && !isValidPhone(normalizedPhone))) {
       return response.status(422).json({ message: 'Provide a valid email, a valid phone number if supplied, and a password of at least 8 characters.' });
     }
-    if (await findByEmail(email.toLowerCase())) return response.status(409).json({ message: 'This email already has an account. Please log in instead.' });
+    if (await findByUsername(normalizedUsername)) return response.status(409).json({ message: 'This username is already taken. Please choose another one.' });
+    if (await findByEmail(normalizedEmail)) return response.status(409).json({ message: 'This email already has an account. Please log in instead.' });
     const computedName = name ?? ([first_name, last_name].filter(Boolean).join(' ').trim() || null);
-    const user = await create({
-      name: computedName,
-      first_name: first_name ?? null,
-      last_name: last_name ?? null,
-      email: email.toLowerCase(),
-      passwordHash: await bcrypt.hash(password, 12),
-      phone: normalizedPhone ? String(normalizedPhone).trim() : null,
-      role,
-      status: 'pending',
-      verificationStatus: 'pending'
-    });
     try {
-      const storedDocument = await mediaFiles.create({
-        uploadedBy: user.id,
-        filename: document.filename,
-        mimeType: document.mimeType,
-        buffer: request.file.buffer
+      const user = await create({
+        name: computedName,
+        first_name: first_name ?? null,
+        last_name: last_name ?? null,
+        username: normalizedUsername,
+        email: normalizedEmail,
+        passwordHash: await bcrypt.hash(password, 12),
+        phone: normalizedPhone ? String(normalizedPhone).trim() : null,
+        role,
+        status: 'pending',
+        verificationStatus: 'pending'
       });
-      const pendingUser = await setVerificationDocument(user.id, storedDocument.id);
       response.status(201).json({
-        user: pendingUser,
-        message: 'Your account is submitted for verification. You can sign in after an admin reviews your ID. We will email you with the decision.'
+        user,
+        message: 'Your account is submitted for review. You can sign in after an admin reviews your application. We will email you with the decision.'
       });
     } catch (error) {
-      await remove(user.id);
+      if (error.code === 'ER_DUP_ENTRY') {
+        return response.status(409).json({ message: 'This username or email already has an account. Please log in instead.' });
+      }
       throw error;
     }
   } catch (error) { next(error); }
 }
 
 export function loginRejection(user, passwordMatches) {
-  if (!user || !passwordMatches) return { status: 401, message: 'Invalid email or password.' };
+  if (!user || !passwordMatches) return { status: 401, message: 'Invalid username/email or password.' };
   if (user.status === 'archived') {
     return {
       status: 403,
@@ -194,13 +196,17 @@ export function loginRejection(user, passwordMatches) {
   if (user.status === 'suspended') {
     return { status: 403, message: 'Your account has been suspended. Please contact the administrator for assistance.' };
   }
-  if (user.status !== 'active') return { status: 401, message: 'Invalid email or password.' };
+  if (user.status !== 'active') return { status: 401, message: 'Invalid username/email or password.' };
   return null;
 }
 
 export async function login(request, response, next) {
   try {
-    let user = await findByEmail(String(request.body.email ?? '').toLowerCase());
+    const identifier = String(request.body.identifier ?? request.body.email ?? '').trim();
+    if (!identifier) return response.status(422).json({ message: 'Enter your username or email address.' });
+    let user = identifier.includes('@')
+      ? await findByEmail(identifier.toLowerCase())
+      : await findByUsername(normalizeUsername(identifier));
     const passwordMatches = user ? await bcrypt.compare(request.body.password ?? '', user.password_hash) : false;
     const rejection = loginRejection(user, passwordMatches);
     if (rejection) return response.status(rejection.status).json({ message: rejection.message });

@@ -2,6 +2,7 @@ import { ensureTenantSidebarStyles, loadTenantStylesheet, renderTenantSidebar } 
 import { withMediaAccessToken } from '../../services/mediaAccess.js';
 import { buildInitialsAvatarSvg } from '../../services/avatar.js';
 import { openAvatarEditor, uploadAvatarPhoto } from '../../services/avatarEditor.js';
+import { setupProfilePrivacy } from '../../services/profilePrivacy.js';
 
 // Avatar helper functions
 const API_BASE = (window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1').replace(/\/api\/v1\/?$/, '');
@@ -99,7 +100,9 @@ function displayNotice(element, text, state = 'error') {
 }
 
 function css() {
-  return loadTenantStylesheet('setting', new URL('./style/setting.css', import.meta.url));
+  const stylesheet = new URL('./style/setting.css', import.meta.url);
+  stylesheet.searchParams.set('v', 'profile-privacy-1');
+  return loadTenantStylesheet('setting', stylesheet);
 }
 
 function ensureSettingLayoutStyles() {
@@ -272,6 +275,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
   firstInput.value = user.first_name ?? (legacyParts[0] ?? '');
   lastInput.value = user.last_name ?? (legacyParts.slice(1).join(' ') || legacyParts[legacyParts.length - 1] || '');
   phoneInput.value = user.phone ?? '';
+  const profilePrivacy = setupProfilePrivacy(profileForm, profileCaption);
 
   function setProfileEditable(enabled) {
     [firstInput, lastInput, phoneInput].forEach((input) => {
@@ -293,6 +297,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
 
   function setEditState(enabled) {
     isEditMode = enabled;
+    profilePrivacy.setEditing(enabled);
     editProfileButton.textContent = enabled ? 'Save Profile' : 'Edit Profile';
     discardProfileButton.hidden = !enabled;
     avatarEditButton.hidden = !enabled;
@@ -401,8 +406,8 @@ export async function renderSetting(root = document.querySelector('#app')) {
         avatar_url: refreshedUser.avatar_url ?? '',
         name: refreshedUser.name ?? ''
       };
-      setEditState(false);
       profileCaption.textContent = payload.name || 'Tenant User';
+      setEditState(false);
     } catch (error) {
       displayNotice(profileNotice, error.message, 'error');
     }

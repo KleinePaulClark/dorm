@@ -2,13 +2,14 @@ import { ensureAdminSidebarStyles, loadAdminStylesheet, renderAdminSidebar } fro
 import { applyAdminPrivacy } from './privacy.js';
 import { buildDefaultUserAvatarSvg, resolveUserAvatarUrl } from './avatar.js';
 import { openAvatarEditor, uploadAvatarPhoto } from '../../services/avatarEditor.js';
+import { setupProfilePrivacy } from '../../services/profilePrivacy.js';
 
 const API = window.DORMHIVE_API_URL ?? 'http://localhost:5000/api/v1';
 const BACKEND_BASE = API.replace(/\/api\/v1$/, '');
 
 function css() {
   const stylesheet = new URL('./style/setting.css', import.meta.url);
-  stylesheet.searchParams.set('v', 'mobile-settings-header-inline-1');
+  stylesheet.searchParams.set('v', 'profile-privacy-1');
   return loadAdminStylesheet('settings', stylesheet);
 }
 
@@ -60,7 +61,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
                     </button>
                     <input class="avatar-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
                   </div>
-                  <div class="user-name" data-privacy-mask="name">${userName}</div>
+                  <div class="user-name">${userName}</div>
                   <div class="profile-actions">
                     <button type="button" class="discard-profile" hidden>Discard</button>
                     <button type="button" class="edit-profile">Edit Profile</button>
@@ -74,22 +75,22 @@ export async function renderSetting(root = document.querySelector('#app')) {
                     <div class="field-row">
                       <label>
                         <span>First Name</span>
-                        <input id="admin-first" name="first_name" type="text" value="${firstName}" data-privacy-mask="name" required readonly>
+                        <input id="admin-first" name="first_name" type="text" value="${firstName}" required readonly>
                       </label>
                       <label>
                         <span>Last Name</span>
-                        <input id="admin-last" name="last_name" type="text" value="${lastName}" data-privacy-mask="name" required readonly>
+                        <input id="admin-last" name="last_name" type="text" value="${lastName}" required readonly>
                       </label>
                     </div>
 
                     <label>
                       <span>Email Address</span>
-                      <input name="email" type="email" value="${email}" data-privacy-mask="email" readonly>
+                      <input name="email" type="email" value="${email}" readonly>
                     </label>
 
                     <label>
                       <span>phone number</span>
-                      <input id="admin-phone" name="phone" type="tel" value="${phone}" data-privacy-mask="phone" maxlength="20" readonly>
+                      <input id="admin-phone" name="phone" type="tel" value="${phone}" maxlength="20" readonly>
                     </label>
 
                     <p class="notice" data-notice="profile" hidden role="alert"></p>
@@ -132,6 +133,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
   const profileView = root.querySelector('.profile-view');
   const securityView = root.querySelector('.security-view');
   const profileForm = root.querySelector('[data-form="profile"]');
+  const profilePrivacy = setupProfilePrivacy(profileForm, root.querySelector('.user-name'));
   const securityForm = root.querySelector('[data-form="security"]');
   const firstInput = profileForm.querySelector('#admin-first');
   const lastInput = profileForm.querySelector('#admin-last');
@@ -175,6 +177,7 @@ export async function renderSetting(root = document.querySelector('#app')) {
 
   function setEditState(enabled) {
     isEditMode = enabled;
+    profilePrivacy.setEditing(enabled);
     editProfileButton.textContent = enabled ? 'Save Profile' : 'Edit Profile';
     discardProfileButton.hidden = !enabled;
     avatarEditButton.hidden = !enabled;
@@ -265,8 +268,8 @@ export async function renderSetting(root = document.querySelector('#app')) {
         avatarImage.src = buildDefaultUserAvatarSvg(payload.name || 'Admin User');
       }
       displayNotice(profileNotice, 'Profile saved.', 'success');
-      setEditState(false);
       root.querySelector('.user-name').textContent = payload.name || 'Admin User';
+      setEditState(false);
     } catch (error) {
       displayNotice(profileNotice, error.message, 'error');
     }

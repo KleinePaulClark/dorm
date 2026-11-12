@@ -213,6 +213,43 @@ input {
   background: #f9f7f2;
   color: #5c5c5c;
 }
+
+.profile-private-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profile-private-value input {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-private-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.profile-detail-toggle {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid #cfe8dc;
+  border-radius: 8px;
+  background: #fff;
+  color: #245c4b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-detail-toggle:hover {
+  border-color: #1aa87a;
+  background: #f1faf6;
+}
+
 .save-btn {
   justify-self: start;
   padding: 0.9rem 1.4rem;

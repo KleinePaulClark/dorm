@@ -104,32 +104,42 @@ export async function renderUserManagement(root = document.querySelector('#app')
     const detailsResponse = await fetch(`${API}/users/${encodeURIComponent(user.id)}/verification-document`, { headers: headers() });
     const details = await detailsResponse.json().catch(() => ({}));
     if (!detailsResponse.ok) throw new Error(details.message || 'Unable to load the verification document.');
-    const fileResponse = await fetch(`${API}/media/${encodeURIComponent(details.data.id)}`, {
-      headers: { Authorization: headers().Authorization }
-    });
-    if (!fileResponse.ok) throw new Error('Unable to open the verification document.');
+    let fileUrl = null;
+    const reviewContent = [];
+    if (details.data) {
+      const fileResponse = await fetch(`${API}/media/${encodeURIComponent(details.data.id)}`, {
+        headers: { Authorization: headers().Authorization }
+      });
+      if (!fileResponse.ok) throw new Error('Unable to open the verification document.');
 
-    const fileUrl = URL.createObjectURL(await fileResponse.blob());
-    const documentPreview = document.createElement('div');
-    documentPreview.className = 'verification-document-preview';
-    if (details.data.mimeType.startsWith('image/')) {
-      const image = document.createElement('img');
-      image.src = fileUrl;
-      image.alt = 'Uploaded identity document';
-      documentPreview.append(image);
+      fileUrl = URL.createObjectURL(await fileResponse.blob());
+      const documentPreview = document.createElement('div');
+      documentPreview.className = 'verification-document-preview';
+      if (details.data.mimeType.startsWith('image/')) {
+        const image = document.createElement('img');
+        image.src = fileUrl;
+        image.alt = 'Uploaded identity document';
+        documentPreview.append(image);
+      } else {
+        const frame = document.createElement('iframe');
+        frame.src = fileUrl;
+        frame.title = 'Uploaded identity document';
+        frame.setAttribute('sandbox', '');
+        documentPreview.append(frame);
+      }
+      reviewContent.push(documentPreview);
     } else {
-      const frame = document.createElement('iframe');
-      frame.src = fileUrl;
-      frame.title = 'Uploaded identity document';
-      frame.setAttribute('sandbox', '');
-      documentPreview.append(frame);
+      const noDocument = document.createElement('p');
+      noDocument.className = 'verification-review-notice';
+      noDocument.textContent = 'No ID document was submitted. Review the applicant details before making a decision.';
+      reviewContent.push(noDocument);
     }
     const applicantFacts = document.createElement('dl');
     applicantFacts.className = 'verification-review-facts';
     applicantFacts.innerHTML = `<div><dt>Applicant</dt><dd>${esc(user.name || 'Unknown user')}</dd></div><div><dt>Email</dt><dd>${esc(user.email || 'Not provided')}</dd></div><div><dt>Account type</dt><dd>${esc(user.role || 'User')}</dd></div>`;
     const content = document.createElement('div');
     content.className = 'verification-review-content';
-    content.append(applicantFacts, documentPreview);
+    content.append(applicantFacts, ...reviewContent);
     const modal = createModal({
       title: 'Review applicant verification',
       content,
@@ -137,7 +147,7 @@ export async function renderUserManagement(root = document.querySelector('#app')
       footerMarkup: '<button type="button" class="verification-review-reject">Reject applicant</button><button type="button" class="verification-review-approve">Approve applicant</button>'
     });
     modal.classList.add('verification-review-modal');
-    modal.addEventListener('close', () => URL.revokeObjectURL(fileUrl), { once: true });
+    if (fileUrl) modal.addEventListener('close', () => URL.revokeObjectURL(fileUrl), { once: true });
     modal.querySelector('.verification-review-approve').addEventListener('click', (event) => updateVerificationStatus(user, 'approved', modal, event.currentTarget));
     modal.querySelector('.verification-review-reject').addEventListener('click', (event) => updateVerificationStatus(user, 'rejected', modal, event.currentTarget));
     await openModal(modal);

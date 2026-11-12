@@ -46,6 +46,7 @@ async function checkAndFixDatabase() {
         `CREATE TABLE IF NOT EXISTS users (
           id INT AUTO_INCREMENT PRIMARY KEY,
           name VARCHAR(255) NOT NULL,
+          username VARCHAR(30) NULL,
           first_name VARCHAR(100),
           last_name VARCHAR(100),
           email VARCHAR(255) UNIQUE NOT NULL,
@@ -61,7 +62,8 @@ async function checkAndFixDatabase() {
           last_login_at DATETIME NULL,
           last_active_at DATETIME NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY idx_users_username (username)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
         
         // Properties table
@@ -203,6 +205,16 @@ async function checkAndFixDatabase() {
         console.log('⚠️  Users table missing last_name column. Adding it...\n');
         await query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)");
         console.log('✓ last_name column added to users table');
+      }
+      if (!userColumnNames.includes('username')) {
+        console.log('⚠️  Users table missing username column. Adding it...\n');
+        await query('ALTER TABLE users ADD COLUMN username VARCHAR(30) NULL AFTER name');
+        console.log('✓ username column added to users table');
+      }
+      const usernameIndexes = await query("SHOW INDEX FROM users WHERE Key_name = 'idx_users_username'");
+      if (usernameIndexes.length === 0) {
+        await query('CREATE UNIQUE INDEX idx_users_username ON users (username)');
+        console.log('✓ unique username index added to users table');
       }
       if (!userColumnNames.includes('phone')) {
         console.log('⚠️  Users table missing phone column. Adding it...\n');

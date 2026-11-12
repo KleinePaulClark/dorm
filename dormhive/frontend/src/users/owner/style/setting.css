@@ -261,6 +261,42 @@ input {
   cursor: not-allowed;
 }
 
+.profile-private-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profile-private-value input {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-private-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.profile-detail-toggle {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid #dfe5df;
+  border-radius: 8px;
+  background: #fff;
+  color: #36574d;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-detail-toggle:hover {
+  border-color: #0b5d4a;
+  background: #f3f8f5;
+}
+
 .save-btn {
   margin-top: 0.25rem;
   justify-self: flex-start;

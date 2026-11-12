@@ -5,6 +5,7 @@
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
+  username VARCHAR(30) NULL,
   first_name VARCHAR(100),
   last_name VARCHAR(100),
   email VARCHAR(255) UNIQUE NOT NULL,
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at DATETIME NULL,
   last_active_at DATETIME NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY idx_users_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -185,6 +187,19 @@ ALTER TABLE properties MODIFY COLUMN room_type VARCHAR(100) NOT NULL;
 -- Add first_name and last_name to users for separate name storage
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(100) AFTER name;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(100) AFTER first_name;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(30) NULL AFTER name;
+SET @username_index_exists = (
+  SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_username'
+);
+SET @username_index_sql = IF(
+  @username_index_exists = 0,
+  'CREATE UNIQUE INDEX idx_users_username ON users (username)',
+  'SELECT 1'
+);
+PREPARE username_index_stmt FROM @username_index_sql;
+EXECUTE username_index_stmt;
+DEALLOCATE PREPARE username_index_stmt;
 ALTER TABLE users MODIFY COLUMN status ENUM('active','suspended','pending','archived') DEFAULT 'active';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'approved';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_document_id INT NULL;

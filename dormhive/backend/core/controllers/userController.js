@@ -67,10 +67,14 @@ export async function list(request, response, next) {
 
 export async function verificationDocument(request, response, next) {
   try {
+    const user = await users.findById(request.params.id);
+    if (!user || user.verification_status !== 'pending') {
+      return response.status(404).json({ message: 'No pending verification review was found.' });
+    }
     const document = await users.findVerificationDocument(request.params.id);
-    return document
-      ? response.json({ data: { id: document.id, filename: document.original_filename, mimeType: document.mime_type } })
-      : response.status(404).json({ message: 'No pending verification document was found.' });
+    return response.json({
+      data: document ? { id: document.id, filename: document.original_filename, mimeType: document.mime_type } : null
+    });
   } catch (error) { next(error); }
 }
 
@@ -87,17 +91,18 @@ export async function reviewVerification(request, response, next) {
       return response.status(409).json({ message: 'This account has already been reviewed.' });
     }
     const document = await users.findVerificationDocument(request.params.id);
-    if (!document) return response.status(409).json({ message: 'This account has no verification document to review.' });
     const updated = await users.reviewVerification(request.params.id, verificationStatus);
     if (!updated) return response.status(409).json({ message: 'This account has already been reviewed.' });
 
-    let documentDeleted = false;
-    try {
-      await mediaFiles.remove(document.id);
-      await users.clearVerificationDocument(request.params.id, document.id);
-      documentDeleted = true;
-    } catch (error) {
-      console.error('Unable to delete reviewed identity document.', error.message);
+    let documentDeleted = !document;
+    if (document) {
+      try {
+        await mediaFiles.remove(document.id);
+        await users.clearVerificationDocument(request.params.id, document.id);
+        documentDeleted = true;
+      } catch (error) {
+        console.error('Unable to delete reviewed identity document.', error.message);
+      }
     }
     let emailNotification;
     try {
@@ -113,7 +118,7 @@ export async function reviewVerification(request, response, next) {
     const user = await users.findById(request.params.id);
     const notices = [`Account ${verificationStatus}.`];
     if (!emailNotification.sent) notices.push('The email notification was not sent; contact the applicant manually.');
-    if (!documentDeleted) notices.push('The uploaded ID could not be deleted; contact support to remove it.');
+    if (document && !documentDeleted) notices.push('The uploaded ID could not be deleted; contact support to remove it.');
     return response.json({ data: user, emailNotification, documentDeleted, message: notices.join(' ') });
   } catch (error) { next(error); }
 }
